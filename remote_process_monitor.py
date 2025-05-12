@@ -16,6 +16,7 @@ from pathlib import Path
 
 THIS_DIR = Path(__file__).parent
 
+
 class RemoteProcessMonitor:
     def __init__(self, ssh_host: str):
         self.ssh_host = ssh_host
@@ -40,17 +41,17 @@ class RemoteProcessMonitor:
             # Create a local socket for communication
             self.logger.debug("Creating local socket")
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.socket.bind(('localhost', 0))  # Bind to localhost
+            self.socket.bind(("localhost", 0))  # Bind to localhost
             self.socket.listen(1)
             port = self.socket.getsockname()[1]
             self.logger.debug("Created local socket on port %d", port)
 
             # Read the remote scripte_monitor.py')
             self.logger.debug("Reading remote script from: %s", THIS_DIR)
-            with open(THIS_DIR / datatype.__file__, 'r') as f:
+            with open(THIS_DIR / datatype.__file__, "r") as f:
                 remote_script = f.read()
 
-            with open(THIS_DIR / 'script_on_remote_machine.py', 'r') as f:
+            with open(THIS_DIR / "script_on_remote_machine.py", "r") as f:
                 remote_script += "\n" + f.read()
 
             # Start the remote Python process that will connect back to us
@@ -63,12 +64,18 @@ class RemoteProcessMonitor:
                 bufsize=1,
                 universal_newlines=True,
             )
+
             # Start threads to monitor stdout/stderr
             def log_output(pipe, prefix):
                 for line in pipe:
                     self.logger.debug("SSH %s: %s", prefix, line.strip())
-            threading.Thread(target=log_output, args=(self.ssh_process.stdout, "stdout"), daemon=True).start()
-            threading.Thread(target=log_output, args=(self.ssh_process.stderr, "stderr"), daemon=True).start()
+
+            threading.Thread(
+                target=log_output, args=(self.ssh_process.stdout, "stdout"), daemon=True
+            ).start()
+            threading.Thread(
+                target=log_output, args=(self.ssh_process.stderr, "stderr"), daemon=True
+            ).start()
 
             # Accept the connection from the remote process
             self.logger.debug("Waiting for remote connection")
@@ -88,12 +95,12 @@ class RemoteProcessMonitor:
                 length_bytes = self.conn.recv(4)
                 if not length_bytes:
                     self.logger.debug("Connection closed by remote")
-                    return self.last_memory if hasattr(self, 'last_memory') else {}
+                    return self.last_memory if hasattr(self, "last_memory") else {}
                 if len(length_bytes) < 4:
                     self.logger.debug("Partial length bytes received: %s", length_bytes)
-                    return self.last_memory if hasattr(self, 'last_memory') else {}
+                    return self.last_memory if hasattr(self, "last_memory") else {}
 
-                length = int.from_bytes(length_bytes, 'big')
+                length = int.from_bytes(length_bytes, "big")
                 # self.logger.debug("Received message length: %d", length)
 
                 # Read the full message
@@ -113,22 +120,29 @@ class RemoteProcessMonitor:
                         info = json.loads(data.decode())
                         if info.get("type") == "log":
                             # Handle log message
-                            self.logger.info("Remote: %s", info['message'])
+                            self.logger.info("Remote: %s", info["message"])
                         elif info.get("type") == "data":
                             # Handle process data
                             self.connections = info["connections"]
-                            processes = {int(pid): datatype.Process(**proc) for pid, proc in info["processes"].items()}
+                            processes = {
+                                int(pid): datatype.Process(**proc)
+                                for pid, proc in info["processes"].items()
+                            }
                             return processes
                     except json.JSONDecodeError as e:
                         self.logger.error("Error decoding JSON: %s", e)
                         self.logger.debug("Problematic data: %s", data)
                 else:
-                    self.logger.debug("Incomplete message: got %d bytes, expected %d", len(data), length)
+                    self.logger.debug(
+                        "Incomplete message: got %d bytes, expected %d",
+                        len(data),
+                        length,
+                    )
 
         except Exception as e:
             self.logger.error("Error reading from socket: %s", e, exc_info=True)
 
-        return self.last_memory if hasattr(self, 'last_memory') else {}
+        return self.last_memory if hasattr(self, "last_memory") else {}
 
     def cleanup(self):
         self.logger.debug("Cleaning up remote monitor")
@@ -141,4 +155,3 @@ class RemoteProcessMonitor:
         if self.socket:
             self.logger.debug("Closing socket")
             self.socket.close()
-

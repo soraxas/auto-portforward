@@ -9,13 +9,14 @@ import sys
 from typing import Dict, Set, List, Tuple
 from remote_process_monitor import RemoteProcessMonitor
 from datatype import Process
+
 # Configure logging
 log_dir = os.path.expanduser("logs")
 os.makedirs(log_dir, exist_ok=True)
 log_file = os.path.join(log_dir, "tui.log")
 
 # Create formatters
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 # Configure root logger
 root_logger = logging.getLogger()
@@ -28,14 +29,17 @@ root_logger.addHandler(file_handler)
 
 logger = logging.getLogger("tui")
 
+
 class ProcessDisplay:
-    def __init__(self, stdscr: "_curses._CursesWindow", remote_monitor: RemoteProcessMonitor):
+    def __init__(
+        self, stdscr: "_curses._CursesWindow", remote_monitor: RemoteProcessMonitor
+    ):
         self.logger = logging.getLogger("tui.display")
         self.logger.debug("Initializing ProcessDisplay")
         self.stdscr = stdscr
         self.done = False
         self.selected_groups: Set[str] = set()
-        self.group_by = 'cwd'
+        self.group_by = "cwd"
         self.sort_reverse = False
         self.filter_text = ""
         self.last_memory: Dict[int, Process] = {}
@@ -52,8 +56,8 @@ class ProcessDisplay:
         curses.use_default_colors()
         curses.init_pair(1, curses.COLOR_GREEN, -1)  # Header color
         curses.init_pair(2, curses.COLOR_YELLOW, -1)  # Selected group color
-        curses.init_pair(3, curses.COLOR_CYAN, -1)   # Cursor color
-        curses.init_pair(4, curses.COLOR_MAGENTA, -1) # Ports color
+        curses.init_pair(3, curses.COLOR_CYAN, -1)  # Cursor color
+        curses.init_pair(4, curses.COLOR_MAGENTA, -1)  # Ports color
         self.logger.debug("Display initialization complete")
 
     def cleanup(self):
@@ -63,7 +67,10 @@ class ProcessDisplay:
     def get_grouped_processes(self) -> Dict[str, list[Process]]:
         grouped = {}
         for pid, process in self.last_memory.items():
-            if self.filter_text and self.filter_text.lower() not in process.name.lower():
+            if (
+                self.filter_text
+                and self.filter_text.lower() not in process.name.lower()
+            ):
                 continue
             key = getattr(process, self.group_by)
             if key not in grouped:
@@ -89,7 +96,7 @@ class ProcessDisplay:
             self.refresh_count += 1
             # Draw header
             header = f"Process Monitor - Group by: {self.group_by} [g] | Filter: {self.filter_text} | Refresh: {self.refresh_count}"
-            self.stdscr.addstr(0, 0, header[:width-1], curses.color_pair(1))
+            self.stdscr.addstr(0, 0, header[: width - 1], curses.color_pair(1))
 
             # Draw processes
             y = 2
@@ -98,7 +105,7 @@ class ProcessDisplay:
             sorted_groups = sorted(
                 grouped.items(),
                 key=lambda x: str(x[0]) if x[0] is not None else "",
-                reverse=self.sort_reverse
+                reverse=self.sort_reverse,
             )
 
             for group, processes in sorted_groups:
@@ -111,14 +118,20 @@ class ProcessDisplay:
 
                 # Draw group header with color
                 group_header = f"[{group_key}]"
-                color = curses.color_pair(2) if is_group_selected else curses.color_pair(1)
+                color = (
+                    curses.color_pair(2) if is_group_selected else curses.color_pair(1)
+                )
                 if is_cursor:
                     group_header = ">" + group_header
-                self.stdscr.addstr(y, 0, group_header[:width-1], color)
+                self.stdscr.addstr(y, 0, group_header[: width - 1], color)
                 self.group_positions.append((y, group_key))
                 y += 1
 
-                for process in sorted(processes, key=lambda p: str(p.pid) if p.pid is not None else "0", reverse=self.sort_reverse):
+                for process in sorted(
+                    processes,
+                    key=lambda p: str(p.pid) if p.pid is not None else "0",
+                    reverse=self.sort_reverse,
+                ):
                     if y >= height - 2:
                         break
 
@@ -126,25 +139,33 @@ class ProcessDisplay:
 
                     # Apply colors
                     if is_group_selected:
-                        self.stdscr.addstr(y, 2, process_str[:width-3], curses.color_pair(2))
+                        self.stdscr.addstr(
+                            y, 2, process_str[: width - 3], curses.color_pair(2)
+                        )
                     else:
                         # Split the string to color the ports part
                         main_part = process_str.split("[Ports:")[0]
-                        ports_part = "[Ports:" + process_str.split("[Ports:")[1] if "[Ports:" in process_str else ""
-                        self.stdscr.addstr(y, 2, main_part[:width-3])
+                        ports_part = (
+                            "[Ports:" + process_str.split("[Ports:")[1]
+                            if "[Ports:" in process_str
+                            else ""
+                        )
+                        self.stdscr.addstr(y, 2, main_part[: width - 3])
                         if ports_part:
-                            self.stdscr.addstr(ports_part[:width-3], curses.color_pair(4))
+                            self.stdscr.addstr(
+                                ports_part[: width - 3], curses.color_pair(4)
+                            )
                     y += 1
                 y += 1
 
             # Clear remaining lines
-            for i in range(y, height-1):
+            for i in range(y, height - 1):
                 self.stdscr.move(i, 0)
                 self.stdscr.clrtoeol()
 
             # Draw footer
             footer = "Controls: [↑/↓]move between groups [g]roup by [s]ort [f]ilter [SPACE]toggle group [q]uit"
-            self.stdscr.addstr(height-1, 0, footer[:width-1], curses.color_pair(1))
+            self.stdscr.addstr(height - 1, 0, footer[: width - 1], curses.color_pair(1))
 
             # Ensure the screen is updated
             self.stdscr.refresh()
@@ -173,27 +194,30 @@ class ProcessDisplay:
     def handle_char(self, char: int) -> None:
         self.logger.debug("Handling character: %d", char)
         try:
-            if char == ord('q'):
+            if char == ord("q"):
                 self.logger.debug("Quit command received")
                 self.done = True
-            elif char == ord('g'):
-                options = ['cwd', 'name', 'pid']
+            elif char == ord("g"):
+                options = ["cwd", "name", "pid"]
                 current_index = options.index(self.group_by)
                 self.group_by = options[(current_index + 1) % len(options)]
                 self.cursor_pos = 0  # Reset cursor position when changing groups
                 self.logger.debug("Changed group by to: %s", self.group_by)
-            elif char == ord('s'):
+            elif char == ord("s"):
                 self.sort_reverse = not self.sort_reverse
                 self.cursor_pos = 0  # Reset cursor position when sorting
-                self.logger.debug("Changed sort direction to: %s", 'reverse' if self.sort_reverse else 'forward')
-            elif char == ord('f'):
+                self.logger.debug(
+                    "Changed sort direction to: %s",
+                    "reverse" if self.sort_reverse else "forward",
+                )
+            elif char == ord("f"):
                 curses.echo()
-                self.stdscr.addstr(curses.LINES-1, 0, "Enter filter text: ")
-                self.filter_text = self.stdscr.getstr().decode('utf-8')
+                self.stdscr.addstr(curses.LINES - 1, 0, "Enter filter text: ")
+                self.filter_text = self.stdscr.getstr().decode("utf-8")
                 curses.noecho()
                 self.cursor_pos = 0  # Reset cursor position when filtering
                 self.logger.debug("Set filter text to: %s", self.filter_text)
-            elif char == ord(' '):
+            elif char == ord(" "):
                 self.toggle_current_group()
             elif char == curses.KEY_UP:
                 self.move_cursor(-1)
@@ -208,8 +232,8 @@ class ProcessDisplay:
         self.logger.debug("Starting display run loop")
         curses.curs_set(0)  # Hide cursor
         self.stdscr.nodelay(True)  # Set to non-blocking mode
-        self.stdscr.timeout(10)    # 10ms timeout for getch
-        self.stdscr.keypad(True)   # Enable keypad mode for arrow keys
+        self.stdscr.timeout(10)  # 10ms timeout for getch
+        self.stdscr.keypad(True)  # Enable keypad mode for arrow keys
 
         # Initial display
         self.make_display()
@@ -240,9 +264,11 @@ class ProcessDisplay:
             except Exception as e:
                 self.logger.error("Error in run loop: %s", e, exc_info=True)
 
+
 async def display_main(stdscr):
     # Get SSH host from command line arguments or use default
     import sys
+
     ssh_host = sys.argv[1] if len(sys.argv) > 1 else "soraxas@fait"
     logger.debug("Starting TUI with SSH host: %s", ssh_host)
 
@@ -259,8 +285,10 @@ async def display_main(stdscr):
     finally:
         display.cleanup()
 
+
 def main(stdscr) -> None:
     return asyncio.run(display_main(stdscr))
+
 
 if __name__ == "__main__":
     # Try to establish connection before entering curses

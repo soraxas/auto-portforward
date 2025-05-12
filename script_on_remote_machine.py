@@ -19,6 +19,7 @@ from dataclasses import dataclass, asdict
 # Create a queue for logs
 log_queue = queue.Queue()
 
+
 # Custom handler to put logs in queue
 class QueueHandler(logging.Handler):
     def emit(self, record):
@@ -28,14 +29,18 @@ class QueueHandler(logging.Handler):
         except Exception:
             self.handleError(record)
 
+
 # Configure remote logging
 logger = logging.getLogger("remote_monitor")
 logger.setLevel(logging.DEBUG)
 
 # Add queue handler
 queue_handler = QueueHandler()
-queue_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+queue_handler.setFormatter(
+    logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+)
 logger.addHandler(queue_handler)
+
 
 @dataclass
 class Process:
@@ -44,6 +49,7 @@ class Process:
     cwd: str
     status: str
     create_time: str
+
 
 def get_processes(connections):
     print("Fetching process information")
@@ -61,13 +67,14 @@ def get_processes(connections):
                 name=proc.name(),
                 cwd=proc.cwd(),
                 status=proc.status(),
-                create_time=str(proc.create_time())
+                create_time=str(proc.create_time()),
             )
             processes[p.pid] = asdict(p)
         except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
             print(f"Error getting process info: {e}")
     print(f"Found {len(processes)} processes with connections")
     return processes
+
 
 def get_connections():
     print("Fetching connection information")
@@ -78,6 +85,7 @@ def get_connections():
             container.add(c.laddr[1])
     print(f"Found {len(connections)} processes with listening ports")
     return {str(k): list(v) for k, v in connections.items()}
+
 
 def main():
     if len(sys.argv) != 2:
@@ -97,7 +105,7 @@ def main():
             data = {
                 "type": "data",
                 "processes": get_processes(connections),
-                "connections": connections
+                "connections": connections,
             }
             msg = json.dumps(data).encode()
             length_bytes = len(msg).to_bytes(4, "big")
@@ -106,12 +114,14 @@ def main():
             time.sleep(1)  # Update every second
         except Exception as e:
             import traceback
+
             print(f"Error in main loop: {e}", file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
             break
 
     print("Closing connection")
     s.close()
+
 
 if __name__ == "__main__":
     main()
