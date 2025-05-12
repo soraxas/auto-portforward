@@ -70,7 +70,7 @@ class RemoteProcessMonitor:
         self.socket = None
         self.conn = None
         self.logger = logging.getLogger("tui.remote_monitor")
-        self.logger.debug(f"Initializing RemoteProcessMonitor for host: {ssh_host}")
+        self.logger.debug("Initializing RemoteProcessMonitor for host: %s", ssh_host)
 
     def connect(self) -> bool:
         """Establish SSH connection and socket. Returns True if successful."""
@@ -78,7 +78,7 @@ class RemoteProcessMonitor:
             self.setup_connection()
             return True
         except Exception as e:
-            self.logger.error(f"Failed to establish connection: {e}", exc_info=True)
+            self.logger.error("Failed to establish connection: %s", e, exc_info=True)
             return False
 
     def setup_connection(self):
@@ -89,121 +89,16 @@ class RemoteProcessMonitor:
             self.socket.bind(('localhost', 0))  # Bind to localhost
             self.socket.listen(1)
             port = self.socket.getsockname()[1]
-            self.logger.debug(f"Created local socket on port {port}")
+            self.logger.debug("Created local socket on port %d", port)
+
+            # Read the remote script
+            script_path = os.path.join(os.path.dirname(__file__), 'remote_monitor.py')
+            self.logger.debug("Reading remote script from: %s", script_path)
+            with open(script_path, 'r') as f:
+                remote_script = f.read()
 
             # Start the remote Python process that will connect back to us
-            remote_cmd = f"""
-python3 -c '
-import socket
-import psutil
-import json
-from dataclasses import dataclass, asdict
-import time
-import sys
-import logging
-import os
-import queue
-import threading
-
-# Create a queue for logs
-log_queue = queue.Queue()
-
-# Custom handler to put logs in queue
-class QueueHandler(logging.Handler):
-    def emit(self, record):
-        try:
-            msg = self.format(record)
-            log_queue.put(msg)
-        except Exception:
-            self.handleError(record)
-
-# Configure remote logging
-logger = logging.getLogger("remote_monitor")
-logger.setLevel(logging.DEBUG)
-
-# Add queue handler
-queue_handler = QueueHandler()
-queue_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-logger.addHandler(queue_handler)
-
-@dataclass
-class Process:
-    pid: int
-    name: str
-    cwd: str
-    status: str
-    create_time: str
-
-def get_processes():
-    logger.debug("Fetching process information")
-    processes = {{}}
-    for proc in psutil.process_iter(["pid", "name", "cwd", "status", "create_time"]):
-        try:
-            p = Process(
-                pid=proc.info["pid"],
-                name=proc.info["name"],
-                cwd=proc.info["cwd"],
-                status=proc.info["status"],
-                create_time=str(proc.info["create_time"])
-            )
-            processes[p.pid] = asdict(p)
-        except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
-            logger.debug(f"Error getting process info: {{e}}")
-    logger.debug(f"Found {{len(processes)}} processes")
-    return processes
-
-def get_connections():
-    logger.debug("Fetching connection information")
-    connections = {{}}
-    for c in psutil.net_connections():
-        if c.status == "LISTEN":
-            container = connections.setdefault(c.pid, set())
-            container.add(c.laddr[1])
-    logger.debug(f"Found {{len(connections)}} processes with listening ports")
-    return {{str(k): list(v) for k, v in connections.items()}}
-
-# Connect to the local socket
-logger.debug("Connecting to local socket")
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-s.connect(("localhost", {port}))
-logger.debug("Connected to local socket")
-
-def send_logs():
-    while True:
-        try:
-            log_msg = log_queue.get()
-            data = {{
-                "type": "log",
-                "message": log_msg
-            }}
-            s.sendall(json.dumps(data).encode() + b"\\n")
-        except Exception as e:
-            logger.error(f"Error sending log: {{e}}")
-            break
-
-# Start log sending thread
-log_thread = threading.Thread(target=send_logs, daemon=True)
-log_thread.start()
-
-while True:
-    try:
-        # Send process and connection information
-        data = {{
-            "type": "data",
-            "processes": get_processes(),
-            "connections": get_connections()
-        }}
-        s.sendall(json.dumps(data).encode() + b"\\n")
-        time.sleep(1)  # Update every second
-    except Exception as e:
-        logger.error(f"Error in main loop: {{e}}")
-        break
-
-logger.debug("Closing connection")
-s.close()
-'
-"""
-            # Start SSH process with port forwarding and the remote command
+            remote_cmd = f"python3 -c '{remote_script}' {port}"
             self.logger.debug("Starting SSH process with port forwarding")
             self.ssh_process = subprocess.Popen(
                 ["ssh", "-R", f"{port}:localhost:{port}", self.ssh_host, remote_cmd],
@@ -216,7 +111,7 @@ s.close()
             def log_output(pipe, prefix):
                 for line in pipe:
                     self.logger.debug(f"SSH {prefix}: {line.strip()}")
-                    print(f"SSH {prefix}: {line.strip()}")
+                    # print(f"SSH {prefix}: {line.strip()}")
             threading.Thread(target=log_output, args=(self.ssh_process.stdout, "stdout"), daemon=True).start()
             threading.Thread(target=log_output, args=(self.ssh_process.stderr, "stderr"), daemon=True).start()
 
@@ -234,34 +129,50 @@ s.close()
             # Check if there's data available
             ready = select.select([self.conn], [], [], 0.1)
             if ready[0]:
-                # Read data until newline
+                # Read message length (4 bytes)
+                length_bytes = self.conn.recv(4)
+                if not length_bytes:
+                    self.logger.debug("Connection closed by remote")
+                    return self.last_memory if hasattr(self, 'last_memory') else {}
+                if len(length_bytes) < 4:
+                    self.logger.debug("Partial length bytes received: %s", length_bytes)
+                    return self.last_memory if hasattr(self, 'last_memory') else {}
+
+                length = int.from_bytes(length_bytes, 'big')
+                self.logger.debug("Received message length: %d", length)
+
+                # Read the full message
                 data = b""
-                while True:
-                    chunk = self.conn.recv(4096)
+                remaining = length
+                while remaining > 0:
+                    chunk = self.conn.recv(min(remaining, 4096))
                     if not chunk:
-                        self.logger.debug("Connection closed by remote")
+                        self.logger.debug("Connection closed while reading message")
                         break
                     data += chunk
-                    if b"\n" in data:
-                        data, _ = data.split(b"\n", 1)
-                        break
+                    remaining -= len(chunk)
+                    self.logger.debug("Read %d bytes, %d remaining", len(chunk), remaining)
 
-                if data:
+                if len(data) == length:
                     try:
                         info = json.loads(data.decode())
                         if info.get("type") == "log":
                             # Handle log message
-                            self.logger.info(f"Remote: {info['message']}")
+                            self.logger.info("Remote: %s", info['message'])
                         elif info.get("type") == "data":
                             # Handle process data
                             self.connections = info["connections"]
                             processes = {int(pid): Process(**proc) for pid, proc in info["processes"].items()}
-                            self.logger.debug(f"Received update with {len(processes)} processes and {len(self.connections)} connections")
+                            # self.logger.debug("Received update with %d processes and %d connections", len(processes), len(self.connections))
                             return processes
                     except json.JSONDecodeError as e:
-                        self.logger.error(f"Error decoding JSON: {e}")
+                        self.logger.error("Error decoding JSON: %s", e)
+                        self.logger.debug("Problematic data: %s", data)
+                else:
+                    self.logger.debug("Incomplete message: got %d bytes, expected %d", len(data), length)
+
         except Exception as e:
-            self.logger.error(f"Error reading from socket: {e}", exc_info=True)
+            self.logger.error("Error reading from socket: %s", e, exc_info=True)
 
         return self.last_memory if hasattr(self, 'last_memory') else {}
 
@@ -317,7 +228,7 @@ class ProcessDisplay:
             if key not in grouped:
                 grouped[key] = []
             grouped[key].append(process)
-        self.logger.debug(f"Grouped {len(self.last_memory)} processes into {len(grouped)} groups")
+        # self.logger.debug(f"Grouped {len(self.last_memory)} processes into {len(grouped)} groups")
         return grouped
 
     def format_process_str(self, process: Process, is_selected: bool) -> str:
@@ -346,19 +257,20 @@ class ProcessDisplay:
     def make_display(self) -> None:
         try:
             # Clear the entire screen
-            self.stdscr.erase()
+            self.stdscr.clear()
 
             height, width = self.stdscr.getmaxyx()
 
             self.refresh_count += 1
             # Draw header
-            header = f"Process Monitor - Group by: {self.group_by} [g] | Filter: {self.filter_text} | crn_refresh: {self.refresh_count}"
+            header = f"Process Monitor - Group by: {self.group_by} [g] | Filter: {self.filter_text} | Refresh: {self.refresh_count}"
             self.stdscr.addstr(0, 0, header[:width-1], curses.color_pair(1))
 
             # Draw processes
             y = 2
             self.group_positions = []  # Reset group positions
             grouped = self.get_grouped_processes()
+            self.logger.debug("Grouped processes: %s", grouped)
             sorted_groups = sorted(
                 grouped.items(),
                 key=lambda x: str(x[0]) if x[0] is not None else "",
@@ -420,7 +332,7 @@ class ProcessDisplay:
             return
 
         self.cursor_pos = (self.cursor_pos + direction) % len(self.group_positions)
-        self.logger.debug(f"Moved cursor to position {self.cursor_pos}")
+        self.logger.debug("Moved cursor to position %d", self.cursor_pos)
         self.make_display()
 
     def toggle_current_group(self) -> None:
@@ -430,10 +342,10 @@ class ProcessDisplay:
         _, group = self.group_positions[self.cursor_pos]
         if group in self.selected_groups:
             self.selected_groups.remove(group)
-            self.logger.debug(f"Deselected group: {group}")
+            self.logger.debug("Deselected group: %s", group)
         else:
             self.selected_groups.add(group)
-            self.logger.debug(f"Selected group: {group}")
+            self.logger.debug("Selected group: %s", group)
         self.make_display()
 
     def handle_char(self, char: int) -> None:
@@ -446,29 +358,28 @@ class ProcessDisplay:
                 current_index = options.index(self.group_by)
                 self.group_by = options[(current_index + 1) % len(options)]
                 self.cursor_pos = 0  # Reset cursor position when changing groups
-                self.logger.debug(f"Changed group by to: {self.group_by}")
-                self.make_display()
+                self.logger.debug("Changed group by to: %s", self.group_by)
             elif char == ord('s'):
                 self.sort_reverse = not self.sort_reverse
                 self.cursor_pos = 0  # Reset cursor position when sorting
-                self.logger.debug(f"Changed sort direction to: {'reverse' if self.sort_reverse else 'forward'}")
-                self.make_display()
+                self.logger.debug("Changed sort direction to: %s", 'reverse' if self.sort_reverse else 'forward')
             elif char == ord('f'):
                 curses.echo()
                 self.stdscr.addstr(curses.LINES-1, 0, "Enter filter text: ")
                 self.filter_text = self.stdscr.getstr().decode('utf-8')
                 curses.noecho()
                 self.cursor_pos = 0  # Reset cursor position when filtering
-                self.logger.debug(f"Set filter text to: {self.filter_text}")
-                self.make_display()
+                self.logger.debug("Set filter text to: %s", self.filter_text)
             elif char == ord(' '):
                 self.toggle_current_group()
             elif char == curses.KEY_UP:
                 self.move_cursor(-1)
             elif char == curses.KEY_DOWN:
                 self.move_cursor(1)
+            else:
+                self.logger.debug("Unhandled key: %d", char)
         except Exception as e:
-            self.logger.error(f"Error handling character: {e}", exc_info=True)
+            self.logger.error("Error handling character: %s", e, exc_info=True)
 
     async def run(self) -> None:
         self.logger.debug("Starting display run loop")
@@ -476,28 +387,32 @@ class ProcessDisplay:
         self.stdscr.nodelay(True)
         self.stdscr.keypad(True)  # Enable keypad mode for arrow keys
 
+        # Initial display
         self.make_display()
 
         while not self.done:
             try:
                 char = self.stdscr.getch()
-                if char == curses.ERR:
+                if char != curses.ERR:
+                    self.logger.debug("Received key: %d", char)
+                    if char == curses.KEY_RESIZE:
+                        self.logger.debug("Window resize detected")
+                        self.make_display()
+                    else:
+                        self.handle_char(char)
+                        self.make_display()  # Update display after handling key
+                else:
                     # Check for updates
                     current_time = time.time()
                     if current_time - self.last_update >= self.update_interval:
-                        self.last_memory = self.remote_monitor.get_remote_processes()
-                        if self.has_memory_changed():
-                            self.logger.debug("Memory changed, updating display")
+                        new_memory = self.remote_monitor.get_remote_processes()
+                        if new_memory:  # Only update if we got valid data
+                            self.last_memory = new_memory
                             self.make_display()
                         self.last_update = current_time
                     await asyncio.sleep(0.1)
-                elif char == curses.KEY_RESIZE:
-                    self.logger.debug("Window resize detected")
-                    self.make_display()
-                else:
-                    self.handle_char(char)
             except Exception as e:
-                self.logger.error(f"Error in run loop: {e}", exc_info=True)
+                self.logger.error("Error in run loop: %s", e, exc_info=True)
 
 async def display_main(stdscr):
     # Get SSH host from command line arguments or use default
@@ -522,13 +437,6 @@ def main(stdscr) -> None:
     return asyncio.run(display_main(stdscr))
 
 if __name__ == "__main__":
-    # Configure logging for this session
-    session_time = time.strftime("%Y%m%d-%H%M%S")
-    session_log_file = os.path.join(log_dir, f"tui-session-{session_time}.log")
-    session_handler = logging.FileHandler(session_log_file)
-    session_handler.setFormatter(formatter)
-    logger.addHandler(session_handler)
-    logger.debug(f"Started new TUI session, logging to: {session_log_file}")
 
     # Try to establish connection before entering curses
     ssh_host = sys.argv[1] if len(sys.argv) > 1 else "soraxas@fait"
