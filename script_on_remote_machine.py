@@ -42,8 +42,6 @@ queue_handler.setFormatter(
 logger.addHandler(queue_handler)
 
 
-
-
 def get_processes(connections):
     # print("Fetching process information")
     processes = {}

@@ -4,6 +4,8 @@ import time
 import logging
 import os
 import sys
+import subprocess
+import signal
 from typing import Dict, Set, List, Tuple
 from textual.app import App, ComposeResult
 from textual.containers import Container
@@ -11,6 +13,7 @@ from textual.widgets import Header, Footer, Static, Tree
 from textual.widgets.tree import TreeNode
 from textual.binding import Binding
 from textual.reactive import reactive
+
 # from textual.style import Style
 from rich.style import Style
 
@@ -37,6 +40,12 @@ root_logger.addHandler(file_handler)
 
 LOGGER = logging.getLogger("tui")
 
+
+def set_process_group():
+    """Set the process group ID to the current process ID."""
+    os.setpgrp()
+
+
 class ProcessTree(Tree):
     def __init__(self, remote_monitor: RemoteProcessMonitor):
         super().__init__("Processes")
@@ -48,19 +57,22 @@ class ProcessTree(Tree):
         self.filter_text = ""
         self.update_interval = 1.0
         self.last_update = 0
+        self.ports_to_forward: Dict[int, subprocess.Popen] = {}
 
     def on_mount(self) -> None:
         def expand_all(node):
             node.expand()
             for child in node.children:
-                (child)
+                expand_all(child)
 
         expand_all(self.root)
-        self.set_interval(self.update_interval, self.update_processes)
+        # Start continuous update loop
+        self.call_later(self.update_processes)
 
     def is_new_memory(self, new_memory: Dict[int, Process]) -> bool:
-        if not new_memory:
-            return False
+        LOGGER.debug(
+            "checking is_new_memory",
+        )
         if not self.last_memory:
             return True
         if len(new_memory) != len(self.last_memory):
@@ -68,25 +80,31 @@ class ProcessTree(Tree):
         for pid, process in new_memory.items():
             if process != self.last_memory[pid]:
                 return True
+        LOGGER.debug("is_new_memory: False")
         return False
 
     async def update_processes(self) -> None:
         new_memory = await self.remote_monitor.get_remote_processes()
         if not new_memory:
+            # Schedule next update immediately
+            self.call_later(self.update_processes)
             return
 
         if not self.is_new_memory(new_memory):
+            # Schedule next update immediately
+            self.call_later(self.update_processes)
             return
 
-        self.last_memory = new_memory
-        self.clear()
-
+        self.last_memory = new_memory.copy()
         await self.update_process_layout()
+
+        # Schedule next update immediately
+        self.call_later(self.update_processes)
 
     async def toggle_group(self, group_key: str) -> None:
         LOGGER.debug("Toggling group: %s", group_key)
         # Convert Text object to string if needed
-        if hasattr(group_key, 'plain'):
+        if hasattr(group_key, "plain"):
             group_key = group_key.plain
         if group_key in self.selected_groups:
             self.selected_groups.remove(group_key)
@@ -95,10 +113,15 @@ class ProcessTree(Tree):
         await self.update_process_layout()
 
     async def update_process_layout(self) -> None:
+        ports_to_forward = set()
+
         # Group processes
         grouped = {}
         for pid, process in self.last_memory.items():
-            if self.filter_text and self.filter_text.lower() not in process.name.lower():
+            if (
+                self.filter_text
+                and self.filter_text.lower() not in process.name.lower()
+            ):
                 continue
             key = getattr(process, self.group_by)
             if key not in grouped:
@@ -109,7 +132,7 @@ class ProcessTree(Tree):
         sorted_groups = sorted(
             grouped.items(),
             key=lambda x: str(x[0]) if x[0] is not None else "",
-            reverse=self.sort_reverse
+            reverse=self.sort_reverse,
         )
 
         # clear any existing nodes
@@ -128,24 +151,95 @@ class ProcessTree(Tree):
             if is_selected:
                 group_node.label.style = selected_style
 
-
             # Sort processes
             sorted_processes = sorted(
                 processes,
                 key=lambda p: str(p.pid) if p.pid is not None else "0",
-                reverse=self.sort_reverse
+                reverse=self.sort_reverse,
             )
 
             for process in sorted_processes:
                 ports = self.remote_monitor.connections.get(str(process.pid), [])
                 ports_str = f" [Ports: {', '.join(map(str, ports))}]" if ports else ""
-                process_str = f"PID: {process.pid} - {process.name} - {process.status}{ports_str}"
+                process_str = (
+                    f"PID: {process.pid} - {process.name} - {process.status}{ports_str}"
+                )
 
                 # Add process node
                 process_node = group_node.add_leaf(process_str)
                 process_node.data = {"is_group": False}
                 if is_selected:
                     process_node.label.style = selected_style
+
+                    # Add ports to forward
+                    for p in ports:
+                        ports_to_forward.add(p)
+        asyncio.create_task(self.manage_ports_forwarding(ports_to_forward))
+
+    async def manage_ports_forwarding(self, ports: Set[int]) -> None:
+        # Start new port forwards
+        for p in ports:
+            if p not in self.ports_to_forward:
+                LOGGER.debug("Adding port to forward: %s", p)
+                try:
+                    # Start the reverse_port subprocess with process group
+                    process = subprocess.Popen(
+                        ["reverse_port.sh", "fait", str(p)],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        preexec_fn=set_process_group,
+                    )
+                    self.ports_to_forward[p] = process
+                    LOGGER.debug(
+                        "Started port forwarding for port %s with PID %s",
+                        p,
+                        process.pid,
+                    )
+                except Exception as e:
+                    LOGGER.error(
+                        "Failed to start port forwarding for port %s: %s", p, e
+                    )
+
+        # Remove old port forwards
+        for existing in list(self.ports_to_forward.keys()):
+            if existing not in ports:
+                LOGGER.debug("Removing port to forward: %s", existing)
+                process = self.ports_to_forward[existing]
+                try:
+                    # Kill the entire process group
+                    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                    process.wait(timeout=5)
+                    LOGGER.debug("Terminated port forwarding for port %s", existing)
+                except subprocess.TimeoutExpired:
+                    LOGGER.warning(
+                        "Port forwarding process for port %s did not terminate gracefully, forcing...",
+                        existing,
+                    )
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                except Exception as e:
+                    LOGGER.error(
+                        "Error terminating port forwarding for port %s: %s", existing, e
+                    )
+                del self.ports_to_forward[existing]
+
+    def on_unmount(self) -> None:
+        """Clean up all port forwarding processes when the widget is removed."""
+        for port, process in self.ports_to_forward.items():
+            try:
+                # Kill the entire process group
+                os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                process.wait(timeout=5)
+                LOGGER.debug(
+                    "Terminated port forwarding for port %s during cleanup", port
+                )
+            except subprocess.TimeoutExpired:
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            except Exception as e:
+                LOGGER.error(
+                    "Error terminating port forwarding for port %s during cleanup: %s",
+                    port,
+                    e,
+                )
 
     async def change_group_by(self) -> None:
         options = ["cwd", "name", "pid"]
@@ -160,6 +254,7 @@ class ProcessTree(Tree):
     async def set_filter(self, text: str) -> None:
         self.filter_text = text
         await self.update_process_layout()
+
 
 class ProcessMonitor(App):
     CSS = """
@@ -211,15 +306,26 @@ class ProcessMonitor(App):
         LOGGER.debug("is_group: %s", is_group)
         if is_group:
             # Convert Text object to string if needed
-            label = node.label.plain if hasattr(node.label, 'plain') else str(node.label)
+            label = (
+                node.label.plain if hasattr(node.label, "plain") else str(node.label)
+            )
             await self.process_tree.toggle_group(label)
         else:
             # If it's a process node, toggle its parent group
             parent = node.parent
             if parent:
                 # Convert Text object to string if needed
-                label = parent.label.plain if hasattr(parent.label, 'plain') else str(parent.label)
+                label = (
+                    parent.label.plain
+                    if hasattr(parent.label, "plain")
+                    else str(parent.label)
+                )
                 await self.process_tree.toggle_group(label)
+
+    def on_unmount(self) -> None:
+        """Clean up resources when the app is closed."""
+        self.remote_monitor.cleanup()
+
 
 class FilterScreen(App):
     def __init__(self, process_tree: ProcessTree):
@@ -239,6 +345,7 @@ class FilterScreen(App):
         else:
             self.process_tree.filter_text += event.character
 
+
 def main():
     ssh_host = sys.argv[1] if len(sys.argv) > 1 else "soraxas@fait"
     LOGGER.debug("Starting TUI with SSH host: %s", ssh_host)
@@ -254,6 +361,7 @@ def main():
         app.run()
     finally:
         remote_monitor.cleanup()
+
 
 if __name__ == "__main__":
     main()

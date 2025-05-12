@@ -54,9 +54,9 @@ class RemoteProcessMonitor:
 
             # Read the remote script
             self.logger.debug("Reading remote script from: %s", THIS_DIR)
-            with open(THIS_DIR / datatype.__file__, 'r') as f:
+            with open(THIS_DIR / datatype.__file__, "r") as f:
                 remote_script = f.read()
-            with open(THIS_DIR / "script_on_remote_machine.py", 'r') as f:
+            with open(THIS_DIR / "script_on_remote_machine.py", "r") as f:
                 remote_script += "\n" + f.read()
 
             # Start the remote Python process that will connect back to us
@@ -69,13 +69,18 @@ class RemoteProcessMonitor:
                 bufsize=1,
                 universal_newlines=True,
             )
+
             # Start threads to monitor stdout/stderr
             def log_output(pipe, prefix):
                 for line in pipe:
                     self.logger.debug(f"SSH {prefix}: {line.strip()}")
 
-            threading.Thread(target=log_output, args=(self.ssh_process.stdout, "stdout"), daemon=True).start()
-            threading.Thread(target=log_output, args=(self.ssh_process.stderr, "stderr"), daemon=True).start()
+            threading.Thread(
+                target=log_output, args=(self.ssh_process.stdout, "stdout"), daemon=True
+            ).start()
+            threading.Thread(
+                target=log_output, args=(self.ssh_process.stderr, "stderr"), daemon=True
+            ).start()
 
             # Accept the connection from the remote process
             self.logger.debug("Waiting for remote connection")
@@ -86,11 +91,12 @@ class RemoteProcessMonitor:
             self.reader = asyncio.StreamReader()
             transport, protocol = self.loop.run_until_complete(
                 self.loop.create_connection(
-                    lambda: asyncio.StreamReaderProtocol(self.reader),
-                    sock=self.conn
+                    lambda: asyncio.StreamReaderProtocol(self.reader), sock=self.conn
                 )
             )
-            self.writer = asyncio.StreamWriter(transport, protocol, self.reader, self.loop)
+            self.writer = asyncio.StreamWriter(
+                transport, protocol, self.reader, self.loop
+            )
 
         except Exception as e:
             self.logger.error(f"Error in setup_connection: {e}", exc_info=True)
@@ -114,11 +120,14 @@ class RemoteProcessMonitor:
                 info = json.loads(data.decode())
                 if info.get("type") == "log":
                     # Handle log message
-                    self.logger.info("Remote: %s", info['message'])
+                    self.logger.info("Remote: %s", info["message"])
                 elif info.get("type") == "data":
                     # Handle process data
                     self.connections = info["connections"]
-                    processes = {int(pid): datatype.Process(**proc) for pid, proc in info["processes"].items()}
+                    processes = {
+                        int(pid): datatype.Process(**proc)
+                        for pid, proc in info["processes"].items()
+                    }
                     self.last_memory = processes
                     return processes
             except json.JSONDecodeError as e:
