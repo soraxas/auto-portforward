@@ -6,9 +6,12 @@ import logging
 import os
 import sys
 
-from typing import Dict, Set, List, Tuple
+from typing import Dict, Set, List, Tuple, TYPE_CHECKING
 from remote_process_monitor import RemoteProcessMonitor
 from datatype import Process
+
+if TYPE_CHECKING:
+    import _curses
 
 # Configure logging
 log_dir = os.path.expanduser("logs")
