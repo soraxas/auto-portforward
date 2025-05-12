@@ -9,13 +9,12 @@ To be run on the remote machine.
 import socket
 import psutil
 import json
-from dataclasses import dataclass, asdict
 import time
 import sys
 import logging
-import os
 import queue
-import threading
+
+from dataclasses import dataclass, asdict
 
 # Create a queue for logs
 log_queue = queue.Queue()
