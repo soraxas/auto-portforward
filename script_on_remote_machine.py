@@ -42,17 +42,10 @@ queue_handler.setFormatter(
 logger.addHandler(queue_handler)
 
 
-@dataclass
-class Process:
-    pid: int
-    name: str
-    cwd: str
-    status: str
-    create_time: str
 
 
 def get_processes(connections):
-    print("Fetching process information")
+    # print("Fetching process information")
     processes = {}
     # Only iterate through processes that have connections
     for pid in connections.keys():
@@ -72,18 +65,18 @@ def get_processes(connections):
             processes[p.pid] = asdict(p)
         except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
             print(f"Error getting process info: {e}")
-    print(f"Found {len(processes)} processes with connections")
+    # print(f"Found {len(processes)} processes with connections")
     return processes
 
 
 def get_connections():
-    print("Fetching connection information")
+    # print("Fetching connection information")
     connections = {}
     for c in psutil.net_connections():
         if c.status == "LISTEN":
             container = connections.setdefault(c.pid, set())
             container.add(c.laddr[1])
-    print(f"Found {len(connections)} processes with listening ports")
+    # print(f"Found {len(connections)} processes with listening ports")
     return {str(k): list(v) for k, v in connections.items()}
 
 
@@ -109,7 +102,7 @@ def main():
             }
             msg = json.dumps(data).encode()
             length_bytes = len(msg).to_bytes(4, "big")
-            print(f"Sending data message, length: {len(msg)}")
+            # print(f"Sending data message, length: {len(msg)}")
             s.sendall(length_bytes + msg)
             time.sleep(1)  # Update every second
         except Exception as e:

@@ -1,17 +1,22 @@
 #!/usr/bin/python
 import asyncio
-import curses
 import time
 import logging
 import os
 import sys
+from typing import Dict, Set, List, Tuple
+from textual.app import App, ComposeResult
+from textual.containers import Container
+from textual.widgets import Header, Footer, Static, Tree
+from textual.widgets.tree import TreeNode
+from textual.binding import Binding
+from textual.reactive import reactive
+# from textual.style import Style
+from rich.style import Style
 
-from typing import Dict, Set, List, Tuple, TYPE_CHECKING
+
 from remote_process_monitor import RemoteProcessMonitor
 from datatype import Process
-
-if TYPE_CHECKING:
-    import _curses
 
 # Configure logging
 log_dir = os.path.expanduser("logs")
@@ -30,276 +35,225 @@ file_handler = logging.FileHandler(log_file)
 file_handler.setFormatter(formatter)
 root_logger.addHandler(file_handler)
 
-logger = logging.getLogger("tui")
+LOGGER = logging.getLogger("tui")
 
-
-class ProcessDisplay:
-    def __init__(
-        self, stdscr: "_curses._CursesWindow", remote_monitor: RemoteProcessMonitor
-    ):
-        self.logger = logging.getLogger("tui.display")
-        self.logger.debug("Initializing ProcessDisplay")
-        self.stdscr = stdscr
-        self.done = False
+class ProcessTree(Tree):
+    def __init__(self, remote_monitor: RemoteProcessMonitor):
+        super().__init__("Processes")
+        self.remote_monitor = remote_monitor
+        self.last_memory: Dict[int, Process] = {}
         self.selected_groups: Set[str] = set()
         self.group_by = "cwd"
         self.sort_reverse = False
         self.filter_text = ""
-        self.last_memory: Dict[int, Process] = {}
         self.update_interval = 1.0
         self.last_update = 0
-        self.cursor_pos = 0
-        self.group_positions: List[Tuple[int, str]] = []
-        self.refresh_count = 0
-        self.remote_monitor = remote_monitor
-        self.needs_update = False
 
-        # Initialize colors
-        curses.start_color()
-        curses.use_default_colors()
-        curses.init_pair(1, curses.COLOR_GREEN, -1)  # Header color
-        curses.init_pair(2, curses.COLOR_YELLOW, -1)  # Selected group color
-        curses.init_pair(3, curses.COLOR_CYAN, -1)  # Cursor color
-        curses.init_pair(4, curses.COLOR_MAGENTA, -1)  # Ports color
-        self.logger.debug("Display initialization complete")
+    def on_mount(self) -> None:
+        def expand_all(node):
+            node.expand()
+            for child in node.children:
+                (child)
 
-    def cleanup(self):
-        self.logger.debug("Cleaning up display")
-        self.remote_monitor.cleanup()
+        expand_all(self.root)
+        self.set_interval(self.update_interval, self.update_processes)
 
-    def get_grouped_processes(self) -> Dict[str, list[Process]]:
+    def is_new_memory(self, new_memory: Dict[int, Process]) -> bool:
+        if not new_memory:
+            return False
+        if not self.last_memory:
+            return True
+        if len(new_memory) != len(self.last_memory):
+            return True
+        for pid, process in new_memory.items():
+            if process != self.last_memory[pid]:
+                return True
+        return False
+
+    async def update_processes(self) -> None:
+        new_memory = await self.remote_monitor.get_remote_processes()
+        if not new_memory:
+            return
+
+        if not self.is_new_memory(new_memory):
+            return
+
+        self.last_memory = new_memory
+        self.clear()
+
+        await self.update_process_layout()
+
+    async def toggle_group(self, group_key: str) -> None:
+        LOGGER.debug("Toggling group: %s", group_key)
+        # Convert Text object to string if needed
+        if hasattr(group_key, 'plain'):
+            group_key = group_key.plain
+        if group_key in self.selected_groups:
+            self.selected_groups.remove(group_key)
+        else:
+            self.selected_groups.add(group_key)
+        await self.update_process_layout()
+
+    async def update_process_layout(self) -> None:
+        # Group processes
         grouped = {}
         for pid, process in self.last_memory.items():
-            if (
-                self.filter_text
-                and self.filter_text.lower() not in process.name.lower()
-            ):
+            if self.filter_text and self.filter_text.lower() not in process.name.lower():
                 continue
             key = getattr(process, self.group_by)
             if key not in grouped:
                 grouped[key] = []
             grouped[key].append(process)
-        return grouped
 
-    def format_process_str(self, process: Process, is_selected: bool) -> str:
-        pid_str = str(process.pid) if process.pid is not None else "N/A"
-        # Get ports for this process
-        ports = self.remote_monitor.connections.get(str(process.pid), [])
-        ports_str = f" [Ports: {', '.join(map(str, ports))}]" if ports else ""
+        # Sort groups
+        sorted_groups = sorted(
+            grouped.items(),
+            key=lambda x: str(x[0]) if x[0] is not None else "",
+            reverse=self.sort_reverse
+        )
 
-        return f"PID: {pid_str:<6} Name: {process.name:<20} Status: {process.status}{ports_str}"
+        # clear any existing nodes
+        self.clear()
 
-    def make_display(self) -> None:
-        try:
-            # Clear the entire screen
-            self.stdscr.clear()
+        # Create tree structure
+        for group, processes in sorted_groups:
+            group_key = str(group) if group is not None else "Unknown"
+            is_selected = group_key in self.selected_groups
 
-            height, width = self.stdscr.getmaxyx()
+            # Create group node
+            group_node = self.root.add(group_key, expand=True)
+            group_node.data = {"is_group": True}
 
-            self.refresh_count += 1
-            # Draw header
-            header = f"Process Monitor - Group by: {self.group_by} [g] | Filter: {self.filter_text} | Refresh: {self.refresh_count}"
-            self.stdscr.addstr(0, 0, header[: width - 1], curses.color_pair(1))
+            selected_style = Style(color="yellow", italic=True)
+            if is_selected:
+                group_node.label.style = selected_style
 
-            # Draw processes
-            y = 2
-            self.group_positions = []  # Reset group positions
-            grouped = self.get_grouped_processes()
-            sorted_groups = sorted(
-                grouped.items(),
-                key=lambda x: str(x[0]) if x[0] is not None else "",
-                reverse=self.sort_reverse,
+
+            # Sort processes
+            sorted_processes = sorted(
+                processes,
+                key=lambda p: str(p.pid) if p.pid is not None else "0",
+                reverse=self.sort_reverse
             )
 
-            for group, processes in sorted_groups:
-                if y >= height - 2:
-                    break
+            for process in sorted_processes:
+                ports = self.remote_monitor.connections.get(str(process.pid), [])
+                ports_str = f" [Ports: {', '.join(map(str, ports))}]" if ports else ""
+                process_str = f"PID: {process.pid} - {process.name} - {process.status}{ports_str}"
 
-                group_key = str(group) if group is not None else "Unknown"
-                is_group_selected = group_key in self.selected_groups
-                is_cursor = len(self.group_positions) == self.cursor_pos
+                # Add process node
+                process_node = group_node.add_leaf(process_str)
+                process_node.data = {"is_group": False}
+                if is_selected:
+                    process_node.label.style = selected_style
 
-                # Draw group header with color
-                group_header = f"[{group_key}]"
-                color = (
-                    curses.color_pair(2) if is_group_selected else curses.color_pair(1)
-                )
-                if is_cursor:
-                    group_header = ">" + group_header
-                self.stdscr.addstr(y, 0, group_header[: width - 1], color)
-                self.group_positions.append((y, group_key))
-                y += 1
+    async def change_group_by(self) -> None:
+        options = ["cwd", "name", "pid"]
+        current_index = options.index(self.group_by)
+        self.group_by = options[(current_index + 1) % len(options)]
+        await self.update_process_layout()
 
-                for process in sorted(
-                    processes,
-                    key=lambda p: str(p.pid) if p.pid is not None else "0",
-                    reverse=self.sort_reverse,
-                ):
-                    if y >= height - 2:
-                        break
+    async def toggle_sort(self) -> None:
+        self.sort_reverse = not self.sort_reverse
+        await self.update_process_layout()
 
-                    process_str = self.format_process_str(process, is_group_selected)
+    async def set_filter(self, text: str) -> None:
+        self.filter_text = text
+        await self.update_process_layout()
 
-                    # Apply colors
-                    if is_group_selected:
-                        self.stdscr.addstr(
-                            y, 2, process_str[: width - 3], curses.color_pair(2)
-                        )
-                    else:
-                        # Split the string to color the ports part
-                        main_part = process_str.split("[Ports:")[0]
-                        ports_part = (
-                            "[Ports:" + process_str.split("[Ports:")[1]
-                            if "[Ports:" in process_str
-                            else ""
-                        )
-                        self.stdscr.addstr(y, 2, main_part[: width - 3])
-                        if ports_part:
-                            self.stdscr.addstr(
-                                ports_part[: width - 3], curses.color_pair(4)
-                            )
-                    y += 1
-                y += 1
+class ProcessMonitor(App):
+    CSS = """
+    Tree > .selected-group {
+        color: yellow;
+        text-style: bold;
+    }
+    Tree > .selected-process {
+        color: yellow;
+    }
+    """
 
-            # Clear remaining lines
-            for i in range(y, height - 1):
-                self.stdscr.move(i, 0)
-                self.stdscr.clrtoeol()
+    BINDINGS = [
+        Binding("g", "change_group_by", "Change Group By"),
+        Binding("s", "toggle_sort", "Toggle Sort"),
+        Binding("f", "filter", "Filter"),
+        Binding("t", "toggle_group", "Toggle Group"),
+        Binding("q", "quit", "Quit"),
+    ]
 
-            # Draw footer
-            footer = "Controls: [↑/↓]move between groups [g]roup by [s]ort [f]ilter [SPACE]toggle group [q]uit"
-            self.stdscr.addstr(height - 1, 0, footer[: width - 1], curses.color_pair(1))
+    def __init__(self, remote_monitor: RemoteProcessMonitor):
+        super().__init__()
+        self.remote_monitor = remote_monitor
+        self.process_tree = ProcessTree(remote_monitor)
 
-            # Ensure the screen is updated
-            self.stdscr.refresh()
-        except Exception as e:
-            self.logger.error("Error in make_display: %s", e, exc_info=True)
+    def compose(self) -> ComposeResult:
+        yield Header()
+        yield self.process_tree
+        yield Footer()
 
-    def move_cursor(self, direction: int) -> None:
-        if not self.group_positions:
+    async def action_change_group_by(self) -> None:
+        await self.process_tree.change_group_by()
+
+    async def action_toggle_sort(self) -> None:
+        await self.process_tree.toggle_sort()
+
+    def action_filter(self) -> None:
+        self.app.push_screen(FilterScreen(self.process_tree))
+
+    async def action_toggle_group(self) -> None:
+        node = self.process_tree.cursor_node
+        if node.is_root:
             return
-
-        self.cursor_pos = (self.cursor_pos + direction) % len(self.group_positions)
-        self.logger.debug("Moved cursor to position %d", self.cursor_pos)
-
-    def toggle_current_group(self) -> None:
-        if not self.group_positions:
-            return
-
-        _, group = self.group_positions[self.cursor_pos]
-        if group in self.selected_groups:
-            self.selected_groups.remove(group)
-            self.logger.debug("Deselected group: %s", group)
-        else:
-            self.selected_groups.add(group)
-            self.logger.debug("Selected group: %s", group)
-
-    def handle_char(self, char: int) -> None:
-        self.logger.debug("Handling character: %d", char)
         try:
-            if char == ord("q"):
-                self.logger.debug("Quit command received")
-                self.done = True
-            elif char == ord("g"):
-                options = ["cwd", "name", "pid"]
-                current_index = options.index(self.group_by)
-                self.group_by = options[(current_index + 1) % len(options)]
-                self.cursor_pos = 0  # Reset cursor position when changing groups
-                self.logger.debug("Changed group by to: %s", self.group_by)
-            elif char == ord("s"):
-                self.sort_reverse = not self.sort_reverse
-                self.cursor_pos = 0  # Reset cursor position when sorting
-                self.logger.debug(
-                    "Changed sort direction to: %s",
-                    "reverse" if self.sort_reverse else "forward",
-                )
-            elif char == ord("f"):
-                curses.echo()
-                self.stdscr.addstr(curses.LINES - 1, 0, "Enter filter text: ")
-                self.filter_text = self.stdscr.getstr().decode("utf-8")
-                curses.noecho()
-                self.cursor_pos = 0  # Reset cursor position when filtering
-                self.logger.debug("Set filter text to: %s", self.filter_text)
-            elif char == ord(" "):
-                self.toggle_current_group()
-            elif char == curses.KEY_UP:
-                self.move_cursor(-1)
-            elif char == curses.KEY_DOWN:
-                self.move_cursor(1)
-            else:
-                self.logger.debug("Unhandled key: %d", char)
-        except Exception as e:
-            self.logger.error("Error handling character: %s", e, exc_info=True)
+            LOGGER.debug("data: %s", node)
+            is_group = node.data.get("is_group")
+        except:
+            is_group = False
+        LOGGER.debug("is_group: %s", is_group)
+        if is_group:
+            # Convert Text object to string if needed
+            label = node.label.plain if hasattr(node.label, 'plain') else str(node.label)
+            await self.process_tree.toggle_group(label)
+        else:
+            # If it's a process node, toggle its parent group
+            parent = node.parent
+            if parent:
+                # Convert Text object to string if needed
+                label = parent.label.plain if hasattr(parent.label, 'plain') else str(parent.label)
+                await self.process_tree.toggle_group(label)
 
-    async def run(self) -> None:
-        self.logger.debug("Starting display run loop")
-        curses.curs_set(0)  # Hide cursor
-        self.stdscr.nodelay(True)  # Set to non-blocking mode
-        self.stdscr.timeout(10)  # 10ms timeout for getch
-        self.stdscr.keypad(True)  # Enable keypad mode for arrow keys
+class FilterScreen(App):
+    def __init__(self, process_tree: ProcessTree):
+        super().__init__()
+        self.process_tree = process_tree
 
-        # Initial display
-        self.make_display()
+    def compose(self) -> ComposeResult:
+        yield Static("Enter filter text:")
+        yield Static(self.process_tree.filter_text)
 
-        while not self.done:
-            try:
-                # Handle input
-                char = self.stdscr.getch()
-                if char != curses.ERR:
-                    self.logger.debug("Received key: %d", char)
-                    if char == curses.KEY_RESIZE:
-                        self.logger.debug("Window resize detected")
-                        self.make_display()
-                    else:
-                        self.handle_char(char)
-                        self.make_display()
+    async def on_key(self, event):
+        if event.key == "escape":
+            self.app.pop_screen()
+        elif event.key == "enter":
+            await self.process_tree.set_filter(self.process_tree.filter_text)
+            self.app.pop_screen()
+        else:
+            self.process_tree.filter_text += event.character
 
-                # Check for updates
-                current_time = time.time()
-                if current_time - self.last_update >= self.update_interval:
-                    new_memory = self.remote_monitor.get_remote_processes()
-                    if new_memory:  # Only update if we got valid data
-                        self.last_memory = new_memory
-                        self.make_display()
-                    self.last_update = current_time
-
-                await asyncio.sleep(0.001)  # 1ms sleep
-            except Exception as e:
-                self.logger.error("Error in run loop: %s", e, exc_info=True)
-
-
-async def display_main(stdscr):
-    # Get SSH host from command line arguments or use default
-    import sys
-
+def main():
     ssh_host = sys.argv[1] if len(sys.argv) > 1 else "soraxas@fait"
-    logger.debug("Starting TUI with SSH host: %s", ssh_host)
+    LOGGER.debug("Starting TUI with SSH host: %s", ssh_host)
 
     # First establish the connection
     remote_monitor = RemoteProcessMonitor(ssh_host)
     if not remote_monitor.connect():
-        logger.error("Failed to establish connection. Exiting.")
-        return
-
-    # Now create the display
-    display = ProcessDisplay(stdscr, remote_monitor)
-    try:
-        await display.run()
-    finally:
-        display.cleanup()
-
-
-def main(stdscr) -> None:
-    return asyncio.run(display_main(stdscr))
-
-
-if __name__ == "__main__":
-    # Try to establish connection before entering curses
-    ssh_host = sys.argv[1] if len(sys.argv) > 1 else "soraxas@fait"
-    remote_monitor = RemoteProcessMonitor(ssh_host)
-    if not remote_monitor.connect():
-        logger.error("Failed to establish connection. Exiting.")
+        LOGGER.error("Failed to establish connection. Exiting.")
         sys.exit(1)
 
-    # Now enter curses
-    curses.wrapper(main)
+    try:
+        app = ProcessMonitor(remote_monitor)
+        app.run()
+    finally:
+        remote_monitor.cleanup()
+
+if __name__ == "__main__":
+    main()
