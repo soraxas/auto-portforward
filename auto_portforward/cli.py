@@ -1,7 +1,7 @@
 import sys
 import logging
 
-from .process_provider.ssh_remote import RemoteProcessMonitor
+from .process_provider.local import MockProcessMonitor
 from .tui import ProcessMonitor
 
 LOGGER = logging.getLogger(__name__)
@@ -12,12 +12,14 @@ def main():
     LOGGER.debug("Starting TUI with SSH host: %s", ssh_host)
 
     # First establish the connection
-    remote_monitor = RemoteProcessMonitor(ssh_host)
-    if not remote_monitor.connect():
-        LOGGER.error("Failed to establish connection. Exiting.")
-        sys.exit(1)
+    # monitor = RemoteProcessMonitor(ssh_host)
+    # if not monitor.connect():
+    #     LOGGER.error("Failed to establish connection. Exiting.")
+    #     sys.exit(1)
+    # monitor = LocalProcessMonitor()
+    monitor = MockProcessMonitor()
 
-    app = ProcessMonitor(remote_monitor)
+    app = ProcessMonitor(monitor)
     app.run()
 
 

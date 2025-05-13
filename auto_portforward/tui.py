@@ -67,7 +67,8 @@ class ProcessTree(Tree):
 
         expand_all(self.root)
         # Start continuous update loop
-        self.call_later(self.update_processes)
+        if not self.call_later(self.update_processes):
+            raise RuntimeError("Failed to schedule update_processes")
 
     def is_new_memory(self, new_memory: Dict[str, Process]) -> bool:
         LOGGER.debug("checking is_new_memory")
@@ -83,21 +84,13 @@ class ProcessTree(Tree):
 
     async def update_processes(self) -> None:
         new_memory = await self.monitor.get_processes()
-        if not new_memory:
-            # Schedule next update immediately
-            self.call_later(self.update_processes)
-            return
+        if new_memory and self.is_new_memory(new_memory):
+            self.last_memory = new_memory.copy()
+            await self.update_process_layout()
 
-        if not self.is_new_memory(new_memory):
-            # Schedule next update immediately
-            self.call_later(self.update_processes)
-            return
-
-        self.last_memory = new_memory.copy()
-        await self.update_process_layout()
-
-        # Schedule next update immediately
-        self.call_later(self.update_processes)
+        # await asyncio.sleep(1)
+        # # Schedule next update immediately
+        # self.call_later(self.update_processes)
 
     async def toggle_group(self, group_key: str) -> None:
         LOGGER.debug("Toggling group: %s", group_key)

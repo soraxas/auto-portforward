@@ -11,22 +11,14 @@ import psutil
 import json
 import time
 import sys
-import logging
 
 from dataclasses import asdict
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    # the following is not needed for the script to run,
-    # as we will inject it (datatype.py) during the ssh process
-    from ..datatype import Process
-
-# Configure remote logging
-logger = logging.getLogger("remote_monitor")
-logger.setLevel(logging.DEBUG)
 
 
-def get_processes(connections: dict[int, list[int]]):
+from ..datatype import Process
+
+
+def get_processes(connections: dict[int, list[int]]) -> dict[int, Process]:
     # print("Fetching process information")
     processes = {}
     # Only iterate through processes that have connections
@@ -45,16 +37,16 @@ def get_processes(connections: dict[int, list[int]]):
                 create_time=str(proc.create_time()),
                 ports=connections[pid],
             )
-            processes[p.pid] = asdict(p)
+            processes[p.pid] = p
         except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
             print(f"Error getting process info: {e}")
     # print(f"Found {len(processes)} processes with connections")
     return processes
 
 
-def get_connections():
+def get_connections() -> dict[int, list[int]]:
     # print("Fetching connection information")
-    connections = {}
+    connections: dict[int, set[int]] = {}
     for c in psutil.net_connections():
         if c.status == "LISTEN":
             container = connections.setdefault(c.pid, set())
@@ -63,7 +55,13 @@ def get_connections():
     return {k: list(v) for k, v in connections.items()}
 
 
-def main():
+def send_via_socket():
+    """
+    This is a script that is run on the remote machine.
+    It sends process and connection information to a local socket.
+    It is used to monitor processes on a remote machine.
+    To be run on the remote machine.
+    """
     if len(sys.argv) != 2:
         print("Usage: python3 remote_monitor.py <port>")
         sys.exit(1)
@@ -80,7 +78,7 @@ def main():
             connections = get_connections()
             data = {
                 "type": "data",
-                "processes": get_processes(connections),
+                "processes": {str(k): asdict(v) for k, v in get_processes(connections).items()},
             }
             msg = json.dumps(data).encode()
             length_bytes = len(msg).to_bytes(4, "big")
@@ -99,4 +97,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    send_via_socket()
