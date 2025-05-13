@@ -5,7 +5,9 @@ import os
 import subprocess
 import signal
 from typing import Dict, Set
+from textual import work
 from textual.app import App, ComposeResult
+from textual.message_pump import Timer
 from textual.widgets import Header, Footer, Static, Tree
 from textual.binding import Binding
 
@@ -58,6 +60,7 @@ class ProcessTree(Tree):
         self.update_interval = 1.0
         self.last_update = 0
         self.forwarded_ports: Dict[int, subprocess.Popen] = {}
+        self.regular_update_timer: Timer | None = None
 
     def on_mount(self) -> None:
         def expand_all(node):
@@ -67,6 +70,11 @@ class ProcessTree(Tree):
 
         expand_all(self.root)
         # Start continuous update loop
+        # self.regular_update_timer = self.set_interval(
+        #     lambda: self.update_processes,
+        #     self.update_interval,
+        # )
+
         if not self.call_later(self.update_processes):
             raise RuntimeError("Failed to schedule update_processes")
 
@@ -82,15 +90,16 @@ class ProcessTree(Tree):
         LOGGER.debug("is_new_memory: False")
         return False
 
+    @work(exclusive=True)
     async def update_processes(self) -> None:
         new_memory = await self.monitor.get_processes()
         if new_memory and self.is_new_memory(new_memory):
             self.last_memory = new_memory.copy()
             await self.update_process_layout()
 
-        # await asyncio.sleep(1)
-        # # Schedule next update immediately
-        # self.call_later(self.update_processes)
+        await asyncio.sleep(1)
+        # Schedule next update immediately
+        self.call_later(self.update_processes)
 
     async def toggle_group(self, group_key: str) -> None:
         LOGGER.debug("Toggling group: %s", group_key)
@@ -205,6 +214,10 @@ class ProcessTree(Tree):
 
     def on_unmount(self) -> None:
         """Clean up all port forwarding processes when the widget is removed."""
+
+        if self.regular_update_timer:
+            self.regular_update_timer.stop()
+
         for port, process in self.forwarded_ports.items():
             try:
                 # Kill the entire process group
