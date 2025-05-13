@@ -14,7 +14,13 @@ import sys
 import logging
 import queue
 
-from dataclasses import dataclass, asdict
+from dataclasses import asdict
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # the following is not needed for the script to run,
+    # as we will inject it (datatype.py) during the ssh process
+    from .datatype import Process
 
 # Create a queue for logs
 log_queue = queue.Queue()
@@ -36,9 +42,7 @@ logger.setLevel(logging.DEBUG)
 
 # Add queue handler
 queue_handler = QueueHandler()
-queue_handler.setFormatter(
-    logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-)
+queue_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
 logger.addHandler(queue_handler)
 
 

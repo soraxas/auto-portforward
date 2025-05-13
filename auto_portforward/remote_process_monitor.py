@@ -2,20 +2,11 @@ import json
 import logging
 import socket
 import subprocess
-import select
 import threading
-import os
 import asyncio
-from dataclasses import dataclass
-
-
-try:
-    from . import datatype
-except ImportError:
-    # Fall back to direct import if not in a package
-    import datatype
 
 from pathlib import Path
+from . import datatype
 
 THIS_DIR = Path(__file__).parent
 
@@ -75,12 +66,8 @@ class RemoteProcessMonitor:
                 for line in pipe:
                     self.logger.debug(f"SSH {prefix}: {line.strip()}")
 
-            threading.Thread(
-                target=log_output, args=(self.ssh_process.stdout, "stdout"), daemon=True
-            ).start()
-            threading.Thread(
-                target=log_output, args=(self.ssh_process.stderr, "stderr"), daemon=True
-            ).start()
+            threading.Thread(target=log_output, args=(self.ssh_process.stdout, "stdout"), daemon=True).start()
+            threading.Thread(target=log_output, args=(self.ssh_process.stderr, "stderr"), daemon=True).start()
 
             # Accept the connection from the remote process
             self.logger.debug("Waiting for remote connection")
@@ -90,13 +77,9 @@ class RemoteProcessMonitor:
             # Create StreamReader and StreamWriter
             self.reader = asyncio.StreamReader()
             transport, protocol = self.loop.run_until_complete(
-                self.loop.create_connection(
-                    lambda: asyncio.StreamReaderProtocol(self.reader), sock=self.conn
-                )
+                self.loop.create_connection(lambda: asyncio.StreamReaderProtocol(self.reader), sock=self.conn)
             )
-            self.writer = asyncio.StreamWriter(
-                transport, protocol, self.reader, self.loop
-            )
+            self.writer = asyncio.StreamWriter(transport, protocol, self.reader, self.loop)
 
         except Exception as e:
             self.logger.error(f"Error in setup_connection: {e}", exc_info=True)
@@ -124,10 +107,7 @@ class RemoteProcessMonitor:
                 elif info.get("type") == "data":
                     # Handle process data
                     self.connections = info["connections"]
-                    processes = {
-                        int(pid): datatype.Process(**proc)
-                        for pid, proc in info["processes"].items()
-                    }
+                    processes = {int(pid): datatype.Process(**proc) for pid, proc in info["processes"].items()}
                     self.last_memory = processes
                     return processes
             except json.JSONDecodeError as e:
