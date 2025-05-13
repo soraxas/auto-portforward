@@ -19,21 +19,21 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     # the following is not needed for the script to run,
     # as we will inject it (datatype.py) during the ssh process
-    from .datatype import Process
+    from ..datatype import Process
 
 # Configure remote logging
 logger = logging.getLogger("remote_monitor")
 logger.setLevel(logging.DEBUG)
 
 
-def get_processes(connections):
+def get_processes(connections: dict[int, list[int]]):
     # print("Fetching process information")
     processes = {}
     # Only iterate through processes that have connections
     for pid in connections.keys():
         try:
             pid = int(pid)
-        except ValueError:
+        except (ValueError, TypeError):
             continue
         try:
             proc = psutil.Process(pid)
@@ -43,6 +43,7 @@ def get_processes(connections):
                 cwd=proc.cwd(),
                 status=proc.status(),
                 create_time=str(proc.create_time()),
+                ports=connections[pid],
             )
             processes[p.pid] = asdict(p)
         except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
@@ -59,7 +60,7 @@ def get_connections():
             container = connections.setdefault(c.pid, set())
             container.add(c.laddr[1])
     # print(f"Found {len(connections)} processes with listening ports")
-    return {str(k): list(v) for k, v in connections.items()}
+    return {k: list(v) for k, v in connections.items()}
 
 
 def main():
@@ -80,7 +81,6 @@ def main():
             data = {
                 "type": "data",
                 "processes": get_processes(connections),
-                "connections": connections,
             }
             msg = json.dumps(data).encode()
             length_bytes = len(msg).to_bytes(4, "big")

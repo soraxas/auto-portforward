@@ -8,3 +8,4 @@ class Process:
     cwd: str
     status: str
     create_time: str
+    ports: list[int]

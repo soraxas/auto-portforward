@@ -6,6 +6,8 @@ import threading
 import asyncio
 
 from pathlib import Path
+
+from .abstract_provider import AbstractProvider
 from .. import ROOT_DIR, datatype
 
 THIS_DIR = Path(__file__).parent
@@ -13,7 +15,7 @@ THIS_DIR = Path(__file__).parent
 LOGGER = logging.getLogger(__name__)
 
 
-class RemoteProcessMonitor:
+class RemoteProcessMonitor(AbstractProvider):
     def __init__(self, ssh_host: str):
         self.ssh_host = ssh_host
         self.connections: dict[str, list[int]] = {}
@@ -24,7 +26,7 @@ class RemoteProcessMonitor:
         self.loop = asyncio.get_event_loop()
         self.reader: asyncio.StreamReader | None = None
         self.writer = None
-        self.last_memory: dict[int, datatype.Process] = {}
+        self.last_memory: dict[str, datatype.Process] = {}
 
     def connect(self) -> bool:
         """Establish SSH connection and socket. Returns True if successful."""
@@ -87,7 +89,7 @@ class RemoteProcessMonitor:
             LOGGER.error(f"Error in setup_connection: {e}", exc_info=True)
             raise
 
-    async def get_remote_processes(self) -> dict[int, datatype.Process]:
+    async def get_processes(self) -> dict[str, datatype.Process]:
         if not self.reader:
             raise RuntimeError("Reader not initialized")
         try:
@@ -110,30 +112,31 @@ class RemoteProcessMonitor:
                     LOGGER.info("Remote: %s", info["message"])
                 elif info.get("type") == "data":
                     # Handle process data
-                    self.connections = info["connections"]
-                    self.last_memory = {int(pid): datatype.Process(**proc) for pid, proc in info["processes"].items()}
+                    self.last_memory = {pid: datatype.Process(**proc) for pid, proc in info["processes"].items()}
                     return self.last_memory
             except json.JSONDecodeError as e:
                 LOGGER.error("Error decoding JSON: %s", e)
                 LOGGER.debug("Problematic data: %s", data)
 
-        except asyncio.IncompleteReadError:
-            LOGGER.debug("Connection closed while reading")
+        except asyncio.IncompleteReadError as e:
+            LOGGER.error("Connection closed while reading")
+            raise e
         except Exception as e:
             LOGGER.error("Error reading from socket: %s", e, exc_info=True)
+            raise e
 
         return self.last_memory
 
-    def cleanup(self):
+    async def cleanup(self) -> None:
         LOGGER.debug("Cleaning up remote monitor")
         if self.ssh_process:
             LOGGER.debug("Terminating SSH process")
             self.ssh_process.terminate()
         if self.writer:
             LOGGER.debug("Closing writer")
-            self.loop.run_until_complete(self.writer.drain())
+            await self.writer.drain()
             self.writer.close()
-            self.loop.run_until_complete(self.writer.wait_closed())
+            await self.writer.wait_closed()
         if self.socket:
             LOGGER.debug("Closing socket")
             self.socket.close()

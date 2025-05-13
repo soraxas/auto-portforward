@@ -12,7 +12,9 @@ from textual.binding import Binding
 # from textual.style import Style
 from rich.style import Style
 
-from .process_provider.remote_process_monitor import RemoteProcessMonitor
+from auto_portforward.process_provider.abstract_provider import AbstractProvider
+
+from .process_provider.ssh_remote import RemoteProcessMonitor
 from .datatype import Process
 
 # Configure logging
@@ -45,10 +47,10 @@ class ProcessTree(Tree):
     A tree of processes.
     """
 
-    def __init__(self, remote_monitor: RemoteProcessMonitor):
+    def __init__(self, monitor: AbstractProvider):
         super().__init__("Processes")
-        self.remote_monitor = remote_monitor
-        self.last_memory: Dict[int, Process] = {}
+        self.monitor: AbstractProvider = monitor
+        self.last_memory: Dict[str, Process] = {}
         self.selected_groups: Set[str] = set()
         self.group_by = "cwd"
         self.sort_reverse = False
@@ -67,7 +69,7 @@ class ProcessTree(Tree):
         # Start continuous update loop
         self.call_later(self.update_processes)
 
-    def is_new_memory(self, new_memory: Dict[int, Process]) -> bool:
+    def is_new_memory(self, new_memory: Dict[str, Process]) -> bool:
         LOGGER.debug("checking is_new_memory")
         if not self.last_memory:
             return True
@@ -80,7 +82,7 @@ class ProcessTree(Tree):
         return False
 
     async def update_processes(self) -> None:
-        new_memory = await self.remote_monitor.get_remote_processes()
+        new_memory = await self.monitor.get_processes()
         if not new_memory:
             # Schedule next update immediately
             self.call_later(self.update_processes)
@@ -152,7 +154,7 @@ class ProcessTree(Tree):
             )
 
             for process in sorted_processes:
-                ports = self.remote_monitor.connections.get(str(process.pid), [])
+                ports = process.ports
                 ports_str = f" [Ports: {', '.join(map(str, ports))}]" if ports else ""
                 process_str = f"PID: {process.pid} - {process.name} - {process.status}{ports_str}"
 
@@ -259,10 +261,10 @@ class ProcessMonitor(App):
         Binding("q", "quit", "Quit"),
     ]
 
-    def __init__(self, remote_monitor: RemoteProcessMonitor):
+    def __init__(self, monitor: RemoteProcessMonitor):
         super().__init__()
-        self.remote_monitor = remote_monitor
-        self.process_tree = ProcessTree(remote_monitor)
+        self.monitor = monitor
+        self.process_tree = ProcessTree(monitor)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -300,9 +302,9 @@ class ProcessMonitor(App):
                 label = parent.label.plain if hasattr(parent.label, "plain") else str(parent.label)
                 await self.process_tree.toggle_group(label)
 
-    def on_unmount(self) -> None:
+    async def on_unmount(self) -> None:
         """Clean up resources when the app is closed."""
-        self.remote_monitor.cleanup()
+        await self.monitor.cleanup()
 
 
 class FilterScreen(App):

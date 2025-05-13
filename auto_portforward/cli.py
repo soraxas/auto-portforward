@@ -1,7 +1,7 @@
 import sys
 import logging
 
-from .process_provider.remote_process_monitor import RemoteProcessMonitor
+from .process_provider.ssh_remote import RemoteProcessMonitor
 from .tui import ProcessMonitor
 
 LOGGER = logging.getLogger(__name__)
@@ -17,11 +17,8 @@ def main():
         LOGGER.error("Failed to establish connection. Exiting.")
         sys.exit(1)
 
-    try:
-        app = ProcessMonitor(remote_monitor)
-        app.run()
-    finally:
-        remote_monitor.cleanup()
+    app = ProcessMonitor(remote_monitor)
+    app.run()
 
 
 if __name__ == "__main__":
