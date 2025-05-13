@@ -113,7 +113,7 @@ class ProcessTree(Tree):
         ports_to_forward = set()
 
         # Group processes
-        grouped = {}
+        grouped: Dict[str, list[Process]] = {}
         for pid, process in self.last_memory.items():
             if self.filter_text and self.filter_text.lower() not in process.name.lower():
                 continue

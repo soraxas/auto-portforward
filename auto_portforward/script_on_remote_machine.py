@@ -12,7 +12,6 @@ import json
 import time
 import sys
 import logging
-import queue
 
 from dataclasses import asdict
 from typing import TYPE_CHECKING
@@ -22,28 +21,9 @@ if TYPE_CHECKING:
     # as we will inject it (datatype.py) during the ssh process
     from .datatype import Process
 
-# Create a queue for logs
-log_queue = queue.Queue()
-
-
-# Custom handler to put logs in queue
-class QueueHandler(logging.Handler):
-    def emit(self, record):
-        try:
-            msg = self.format(record)
-            log_queue.put(msg)
-        except Exception:
-            self.handleError(record)
-
-
 # Configure remote logging
 logger = logging.getLogger("remote_monitor")
 logger.setLevel(logging.DEBUG)
-
-# Add queue handler
-queue_handler = QueueHandler()
-queue_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-logger.addHandler(queue_handler)
 
 
 def get_processes(connections):

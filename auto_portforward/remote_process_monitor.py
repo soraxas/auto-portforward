@@ -14,15 +14,16 @@ THIS_DIR = Path(__file__).parent
 class RemoteProcessMonitor:
     def __init__(self, ssh_host: str):
         self.ssh_host = ssh_host
-        self.connections = {}
+        self.connections: dict[str, list[int]] = {}
         self.ssh_process = None
         self.socket = None
         self.conn = None
         self.logger = logging.getLogger("tui.remote_monitor")
         self.logger.debug("Initializing RemoteProcessMonitor for host: %s", ssh_host)
         self.loop = asyncio.get_event_loop()
-        self.reader = None
+        self.reader: asyncio.StreamReader | None = None
         self.writer = None
+        self.last_memory: dict[int, datatype.Process] = {}
 
     def connect(self) -> bool:
         """Establish SSH connection and socket. Returns True if successful."""
@@ -86,12 +87,14 @@ class RemoteProcessMonitor:
             raise
 
     async def get_remote_processes(self) -> dict[int, datatype.Process]:
+        if not self.reader:
+            raise RuntimeError("Reader not initialized")
         try:
             # Read message length (4 bytes)
             length_bytes = await self.reader.readexactly(4)
             if not length_bytes:
                 self.logger.debug("Connection closed by remote")
-                return self.last_memory if hasattr(self, "last_memory") else {}
+                return self.last_memory
 
             length = int.from_bytes(length_bytes, "big")
             # self.logger.debug("Received message length: %d", length)
@@ -107,9 +110,8 @@ class RemoteProcessMonitor:
                 elif info.get("type") == "data":
                     # Handle process data
                     self.connections = info["connections"]
-                    processes = {int(pid): datatype.Process(**proc) for pid, proc in info["processes"].items()}
-                    self.last_memory = processes
-                    return processes
+                    self.last_memory = {int(pid): datatype.Process(**proc) for pid, proc in info["processes"].items()}
+                    return self.last_memory
             except json.JSONDecodeError as e:
                 self.logger.error("Error decoding JSON: %s", e)
                 self.logger.debug("Problematic data: %s", data)
@@ -119,7 +121,7 @@ class RemoteProcessMonitor:
         except Exception as e:
             self.logger.error("Error reading from socket: %s", e, exc_info=True)
 
-        return self.last_memory if hasattr(self, "last_memory") else {}
+        return self.last_memory
 
     def cleanup(self):
         self.logger.debug("Cleaning up remote monitor")
