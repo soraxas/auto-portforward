@@ -24,7 +24,7 @@ def get_processes(connections: dict[int, list[int]]) -> dict[int, Process]:
                 cwd=proc.cwd(),
                 status=proc.status(),
                 create_time=str(proc.create_time()),
-                ports=connections[pid],
+                ports=sorted(connections[pid]),
             )
             processes[p.pid] = p
         except (psutil.NoSuchProcess, psutil.AccessDenied) as e:

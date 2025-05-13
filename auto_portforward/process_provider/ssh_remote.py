@@ -3,10 +3,9 @@ import logging
 import socket
 import subprocess
 import threading
-import asyncio
 
 from pathlib import Path
-
+from dataclasses import dataclass, field
 from .abstract_provider import AbstractProvider
 from . import get_process_with_openports, script_on_remote_machine
 from .. import ROOT_DIR, datatype
@@ -28,18 +27,115 @@ def build_ssh_single_file_mode_script():
     return remote_script
 
 
+@dataclass
+class SharedMemory:
+    processes: dict[str, datatype.Process]
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    has_new_data: threading.Event = field(default_factory=threading.Event)
+    is_finished: bool = False
+
+
+def run_remote_script(ssh_host: str, shared_memory: SharedMemory):
+    try:
+        # Create a local socket for communication
+        LOGGER.debug("Creating local socket")
+        local_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        local_socket.bind(("localhost", 0))  # Bind to localhost
+        local_socket.listen(1)
+        port = local_socket.getsockname()[1]
+        LOGGER.debug("Created local socket on port %d", port)
+
+        # Read the remote script
+        LOGGER.debug("Reading remote script from: %s", THIS_DIR)
+
+        # Start the remote Python process that will connect back to us
+        remote_cmd = f"python3 -c '{build_ssh_single_file_mode_script()}' {port}"
+        LOGGER.debug("Starting SSH process with port forwarding")
+        ssh_process = subprocess.Popen(
+            ["ssh", "-R", f"{port}:localhost:{port}", ssh_host, remote_cmd],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=1,
+            universal_newlines=True,
+        )
+
+        # Start threads to monitor stdout/stderr
+        def log_output(pipe, prefix):
+            for line in pipe:
+                LOGGER.debug(f"SSH {prefix}: {line.strip()}")
+
+        threading.Thread(target=log_output, args=(ssh_process.stdout, "stdout"), daemon=True).start()
+        threading.Thread(target=log_output, args=(ssh_process.stderr, "stderr"), daemon=True).start()
+
+        # Accept the connection from the remote process
+        LOGGER.debug("Waiting for remote connection")
+        conn, _ = local_socket.accept()
+        LOGGER.debug("Remote connection established")
+
+        try:
+            last_data: dict[str, datatype.Process] = {}
+            while not shared_memory.is_finished:
+                # Read message length (4 bytes)
+                length_bytes = conn.recv(4)
+                if not length_bytes:
+                    raise RuntimeError("Connection closed by remote")
+
+                length = int.from_bytes(length_bytes, "big")
+                # LOGGER.debug("Received message length: %d", length)
+
+                # Read the full message
+                data = conn.recv(length)
+
+                try:
+                    info = json.loads(data.decode())
+                    if info.get("type") == "log":
+                        # Handle log message
+                        LOGGER.info("Remote: %s", info["message"])
+                    elif info.get("type") == "data":
+                        # Handle process data
+                        new_data = {
+                            pid: datatype.Process(
+                                pid=proc["pid"],
+                                name=proc["name"],
+                                cwd=proc["cwd"],
+                                status=proc["status"],
+                                create_time=proc["create_time"],
+                                ports=sorted(proc["ports"]),
+                            )
+                            for pid, proc in info["processes"].items()
+                        }
+                        if new_data != last_data:
+                            with shared_memory.lock:
+                                LOGGER.debug("Setting new data")
+                                shared_memory.processes = new_data
+                                shared_memory.has_new_data.set()
+                            last_data = new_data
+
+                except json.JSONDecodeError as e:
+                    LOGGER.error("Error decoding JSON: %s", e)
+                    LOGGER.debug("Problematic data: %s", data)
+        finally:
+            LOGGER.debug("Terminating SSH process")
+            ssh_process.terminate()
+            LOGGER.debug("Closing local socket")
+            conn.close()
+            local_socket.close()
+            # for thread in threads:
+            #     thread.cancel()
+            #     thread.join()
+
+    except Exception as e:
+        LOGGER.error(f"Error in setup_connection: {e}", exc_info=True)
+        raise
+
+
 class RemoteProcessMonitor(AbstractProvider):
     def __init__(self, ssh_host: str):
         self.ssh_host = ssh_host
-        self.connections: dict[str, list[int]] = {}
-        self.ssh_process: subprocess.Popen | None = None
-        self.socket = None
-        self.conn = None
         LOGGER.debug("Initializing RemoteProcessMonitor for host: %s", ssh_host)
-        self.loop = asyncio.get_event_loop()
-        self.reader: asyncio.StreamReader | None = None
-        self.writer = None
-        self.last_memory: dict[str, datatype.Process] = {}
+        self.shared_memory = SharedMemory(processes={})
+        self.thread: threading.Thread | None = None
+        self.cached_processes: dict[str, datatype.Process] = {}
 
     def connect(self) -> bool:
         """Establish SSH connection and socket. Returns True if successful."""
@@ -51,101 +147,17 @@ class RemoteProcessMonitor(AbstractProvider):
             return False
 
     def setup_connection(self):
-        try:
-            # Create a local socket for communication
-            LOGGER.debug("Creating local socket")
-            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.socket.bind(("localhost", 0))  # Bind to localhost
-            self.socket.listen(1)
-            port = self.socket.getsockname()[1]
-            LOGGER.debug("Created local socket on port %d", port)
-
-            # Read the remote script
-            LOGGER.debug("Reading remote script from: %s", THIS_DIR)
-
-            # Start the remote Python process that will connect back to us
-            remote_cmd = f"python3 -c '{build_ssh_single_file_mode_script()}' {port}"
-            LOGGER.debug("Starting SSH process with port forwarding")
-            self.ssh_process = subprocess.Popen(
-                ["ssh", "-R", f"{port}:localhost:{port}", self.ssh_host, remote_cmd],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                bufsize=1,
-                universal_newlines=True,
-            )
-
-            # Start threads to monitor stdout/stderr
-            def log_output(pipe, prefix):
-                for line in pipe:
-                    LOGGER.debug(f"SSH {prefix}: {line.strip()}")
-
-            threading.Thread(target=log_output, args=(self.ssh_process.stdout, "stdout"), daemon=True).start()
-            threading.Thread(target=log_output, args=(self.ssh_process.stderr, "stderr"), daemon=True).start()
-
-            # Accept the connection from the remote process
-            LOGGER.debug("Waiting for remote connection")
-            self.conn, _ = self.socket.accept()
-            LOGGER.debug("Remote connection established")
-
-            # Create StreamReader and StreamWriter
-            self.reader = asyncio.StreamReader()
-            transport, protocol = self.loop.run_until_complete(
-                self.loop.create_connection(lambda: asyncio.StreamReaderProtocol(self.reader), sock=self.conn)
-            )
-            self.writer = asyncio.StreamWriter(transport, protocol, self.reader, self.loop)
-
-        except Exception as e:
-            LOGGER.error(f"Error in setup_connection: {e}", exc_info=True)
-            raise
+        self.thread = threading.Thread(target=run_remote_script, args=(self.ssh_host, self.shared_memory))
+        self.thread.start()
 
     async def get_processes(self) -> dict[str, datatype.Process]:
-        if not self.reader:
-            raise RuntimeError("Reader not initialized")
-        try:
-            # Read message length (4 bytes)
-            length_bytes = await self.reader.readexactly(4)
-            if not length_bytes:
-                LOGGER.debug("Connection closed by remote")
-                return self.last_memory
-
-            length = int.from_bytes(length_bytes, "big")
-            # LOGGER.debug("Received message length: %d", length)
-
-            # Read the full message
-            data = await self.reader.readexactly(length)
-
-            try:
-                info = json.loads(data.decode())
-                if info.get("type") == "log":
-                    # Handle log message
-                    LOGGER.info("Remote: %s", info["message"])
-                elif info.get("type") == "data":
-                    # Handle process data
-                    self.last_memory = {pid: datatype.Process(**proc) for pid, proc in info["processes"].items()}
-                    return self.last_memory
-            except json.JSONDecodeError as e:
-                LOGGER.error("Error decoding JSON: %s", e)
-                LOGGER.debug("Problematic data: %s", data)
-
-        except asyncio.IncompleteReadError as e:
-            LOGGER.error("Connection closed while reading")
-            raise e
-        except Exception as e:
-            LOGGER.error("Error reading from socket: %s", e, exc_info=True)
-            raise e
-
-        return self.last_memory
+        if self.shared_memory.has_new_data.is_set():
+            with self.shared_memory.lock:
+                self.cached_processes = self.shared_memory.processes
+            self.shared_memory.has_new_data.clear()
+        return self.cached_processes
 
     async def cleanup(self) -> None:
-        LOGGER.debug("Cleaning up remote monitor")
-        if self.ssh_process:
-            LOGGER.debug("Terminating SSH process")
-            self.ssh_process.terminate()
-        if self.writer:
-            LOGGER.debug("Closing writer")
-            await self.writer.drain()
-            self.writer.close()
-            await self.writer.wait_closed()
-        if self.socket:
-            LOGGER.debug("Closing socket")
-            self.socket.close()
+        self.shared_memory.is_finished = True
+        if self.thread:
+            self.thread.join()

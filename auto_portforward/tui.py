@@ -82,7 +82,6 @@ class ProcessTree(Tree):
             raise RuntimeError("Failed to schedule update_processes")
 
     def is_new_memory(self, new_memory: Dict[str, Process]) -> bool:
-        LOGGER.debug("checking is_new_memory")
         if not self.last_memory:
             return True
         if len(new_memory) != len(self.last_memory):
@@ -90,7 +89,6 @@ class ProcessTree(Tree):
         for pid, process in new_memory.items():
             if process != self.last_memory[pid]:
                 return True
-        LOGGER.debug("is_new_memory: False")
         return False
 
     @work(exclusive=True)
@@ -178,14 +176,13 @@ class ProcessTree(Tree):
         # Remove old port forwards
         for existing in list(self.forwarded_ports.keys()):
             if existing not in ports_to_forward:
-                LOGGER.debug("Removing port to forward: %s", existing)
                 process = self.forwarded_ports.pop(existing)
                 try:
                     process.terminate()
                     # # Kill the entire process group
                     # os.killpg(os.getpgid(process.pid), signal.SIGTERM)
                     process.wait(timeout=5)
-                    LOGGER.debug("Terminated port forwarding for port %s", existing)
+                    LOGGER.info("Terminated port forwarding for port %s", existing)
                 except subprocess.TimeoutExpired:
                     LOGGER.warning(
                         "Port forwarding process for port %s did not terminate gracefully, forcing...",
@@ -197,7 +194,7 @@ class ProcessTree(Tree):
         # Start new port forwards
         for p in ports_to_forward:
             if p not in self.forwarded_ports:
-                LOGGER.debug("Adding port to forward: %s", p)
+                # LOGGER.debug("Adding port to forward: %s", p)
                 try:
                     # Start the reverse_port subprocess with process group
                     process = subprocess.Popen(
@@ -207,7 +204,7 @@ class ProcessTree(Tree):
                         preexec_fn=set_process_group,
                     )
                     self.forwarded_ports[p] = process
-                    LOGGER.debug(
+                    LOGGER.info(
                         "Started port forwarding for port %s with PID %s",
                         p,
                         process.pid,

@@ -2,7 +2,7 @@ import sys
 import logging
 import argparse
 
-from .tui import ProcessMonitor
+from auto_portforward.tui import ProcessMonitor
 
 LOGGER = logging.getLogger(__name__)
 
@@ -21,15 +21,15 @@ def main():
     args = parser.parse_args()
 
     if args.local:
-        from .process_provider.local import LocalProcessMonitor
+        from auto_portforward.process_provider.local import LocalProcessMonitor
 
         monitor = LocalProcessMonitor()
     elif args.mock:
-        from .process_provider.local import MockProcessMonitor
+        from auto_portforward.process_provider.local import MockProcessMonitor
 
         monitor = MockProcessMonitor()
     else:
-        from .process_provider.ssh_remote import RemoteProcessMonitor
+        from auto_portforward.process_provider.ssh_remote import RemoteProcessMonitor
 
         monitor = RemoteProcessMonitor(args.ssh_host)
         if not monitor.connect():
