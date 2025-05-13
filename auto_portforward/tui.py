@@ -12,8 +12,7 @@ from textual.binding import Binding
 # from textual.style import Style
 from rich.style import Style
 
-
-from .remote_process_monitor import RemoteProcessMonitor
+from .process_provider.remote_process_monitor import RemoteProcessMonitor
 from .datatype import Process
 
 # Configure logging

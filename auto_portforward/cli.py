@@ -1,8 +1,8 @@
 import sys
 import logging
 
-from auto_portforward.remote_process_monitor import RemoteProcessMonitor
-from auto_portforward.tui import ProcessMonitor
+from .process_provider.remote_process_monitor import RemoteProcessMonitor
+from .tui import ProcessMonitor
 
 LOGGER = logging.getLogger(__name__)
 
