@@ -8,11 +8,24 @@ import asyncio
 from pathlib import Path
 
 from .abstract_provider import AbstractProvider
+from . import get_process_with_openports, script_on_remote_machine
 from .. import ROOT_DIR, datatype
 
 THIS_DIR = Path(__file__).parent
 
 LOGGER = logging.getLogger(__name__)
+
+
+def build_ssh_single_file_mode_script():
+    remote_script = 'locals()["ssh_single_file_mode"] = True\n'
+    with open(ROOT_DIR / datatype.__file__, "r") as f:
+        remote_script += f.read() + "\n"
+    with open(THIS_DIR / get_process_with_openports.__file__, "r") as f:
+        remote_script += f.read() + "\n"
+    with open(THIS_DIR / script_on_remote_machine.__file__, "r") as f:
+        remote_script += f.read() + "\n"
+
+    return remote_script
 
 
 class RemoteProcessMonitor(AbstractProvider):
@@ -49,13 +62,9 @@ class RemoteProcessMonitor(AbstractProvider):
 
             # Read the remote script
             LOGGER.debug("Reading remote script from: %s", THIS_DIR)
-            with open(ROOT_DIR / datatype.__file__, "r") as f:
-                remote_script = f.read()
-            with open(THIS_DIR / "script_on_remote_machine.py", "r") as f:
-                remote_script += "\n" + f.read()
 
             # Start the remote Python process that will connect back to us
-            remote_cmd = f"python3 -c '{remote_script}' {port}"
+            remote_cmd = f"python3 -c '{build_ssh_single_file_mode_script()}' {port}"
             LOGGER.debug("Starting SSH process with port forwarding")
             self.ssh_process = subprocess.Popen(
                 ["ssh", "-R", f"{port}:localhost:{port}", self.ssh_host, remote_cmd],
