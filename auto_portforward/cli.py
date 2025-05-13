@@ -1,23 +1,40 @@
 import sys
 import logging
+import argparse
 
-from .process_provider.local import MockProcessMonitor
 from .tui import ProcessMonitor
 
 LOGGER = logging.getLogger(__name__)
 
 
 def main():
-    ssh_host = sys.argv[1] if len(sys.argv) > 1 else "soraxas@fait"
-    LOGGER.debug("Starting TUI with SSH host: %s", ssh_host)
+    parser = argparse.ArgumentParser(description="Process Monitor CLI")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("-l", "--local", action="store_true", help="Use local process monitor")
+    group.add_argument("--mock", action="store_true", help="Use mock process monitor")
+    parser.add_argument(
+        "ssh_host",
+        nargs="?",
+        default="soraxas@fait",
+        help="SSH host (default: soraxas@fait)",
+    )
+    args = parser.parse_args()
 
-    # First establish the connection
-    # monitor = RemoteProcessMonitor(ssh_host)
-    # if not monitor.connect():
-    #     LOGGER.error("Failed to establish connection. Exiting.")
-    #     sys.exit(1)
-    # monitor = LocalProcessMonitor()
-    monitor = MockProcessMonitor()
+    if args.local:
+        from .process_provider.local import LocalProcessMonitor
+
+        monitor = LocalProcessMonitor()
+    elif args.mock:
+        from .process_provider.local import MockProcessMonitor
+
+        monitor = MockProcessMonitor()
+    else:
+        from .process_provider.ssh_remote import RemoteProcessMonitor
+
+        monitor = RemoteProcessMonitor(args.ssh_host)
+        if not monitor.connect():
+            LOGGER.error("Failed to establish connection. Exiting.")
+            sys.exit(1)
 
     app = ProcessMonitor(monitor)
     app.run()

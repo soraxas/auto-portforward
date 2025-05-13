@@ -11,10 +11,20 @@ class MockProcessMonitor(abstract_provider.AbstractProvider):
         # Create some mock processes with listening ports
         mock_processes = {
             "1234": datatype.Process(
-                pid=1234, name="nginx", cwd="/etc/nginx", status="running", create_time="1234567890", ports=[80, 443]
+                pid=1234,
+                name="nginx",
+                cwd="/etc/nginx",
+                status="running",
+                create_time="1234567890",
+                ports=[80, 443],
             ),
             "5678": datatype.Process(
-                pid=5678, name="python", cwd="/home/user/code", status="running", create_time="1234567891", ports=[8000]
+                pid=5678,
+                name="python",
+                cwd="/home/user/code",
+                status="running",
+                create_time="1234567891",
+                ports=[8000],
             ),
             "9012": datatype.Process(
                 pid=9012,

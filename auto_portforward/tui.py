@@ -10,6 +10,8 @@ from textual.app import App, ComposeResult
 from textual.message_pump import Timer
 from textual.widgets import Header, Footer, Static, Tree
 from textual.binding import Binding
+from textual.widgets import Log
+
 
 # from textual.style import Style
 from rich.style import Style
@@ -49,7 +51,7 @@ class ProcessTree(Tree):
     A tree of processes.
     """
 
-    def __init__(self, monitor: AbstractProvider):
+    def __init__(self, monitor: AbstractProvider, logger: Log):
         super().__init__("Processes")
         self.monitor: AbstractProvider = monitor
         self.last_memory: Dict[str, Process] = {}
@@ -61,6 +63,7 @@ class ProcessTree(Tree):
         self.last_update = 0
         self.forwarded_ports: Dict[int, subprocess.Popen] = {}
         self.regular_update_timer: Timer | None = None
+        self.logger: Log = logger
 
     def on_mount(self) -> None:
         def expand_all(node):
@@ -248,6 +251,16 @@ class ProcessTree(Tree):
         await self.update_process_layout()
 
 
+class TUILogHandler(logging.Handler):
+    def __init__(self, tui_logger):
+        super().__init__()
+        self.tui_logger = tui_logger
+
+    def emit(self, record):
+        msg = self.format(record)
+        self.tui_logger.write_line(msg)
+
+
 class ProcessMonitor(App):
     CSS = """
     Tree > .selected-group {
@@ -270,11 +283,20 @@ class ProcessMonitor(App):
     def __init__(self, monitor: RemoteProcessMonitor):
         super().__init__()
         self.monitor = monitor
-        self.process_tree = ProcessTree(monitor)
+        self.logger = Log()
+        self.process_tree = ProcessTree(monitor, self.logger)
+
+        # Attach TUI log handler
+        tui_log_handler = TUILogHandler(self.logger)
+        tui_log_handler.setLevel(logging.DEBUG)
+        formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+        tui_log_handler.setFormatter(formatter)
+        LOGGER.addHandler(tui_log_handler)
 
     def compose(self) -> ComposeResult:
         yield Header()
         yield self.process_tree
+        yield self.logger
         yield Footer()
 
     async def action_change_group_by(self) -> None:
