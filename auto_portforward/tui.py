@@ -46,6 +46,49 @@ def set_process_group():
     os.setpgrp()
 
 
+class SSHForward:
+    def __init__(self, port: int):
+        self.port = port
+        self.had_cleanup = False
+        self.process: subprocess.Popen | None = None
+
+    def start(self):
+        self.process = subprocess.Popen(
+            ["reverse_port.sh", "fait", str(self.port)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            preexec_fn=set_process_group,
+        )
+        LOGGER.info(
+            "Started port forwarding for port %s with PID %s",
+            self.port,
+            self.process.pid,
+        )
+
+    def cleanup(self):
+        try:
+            self.process.terminate()
+            os.kill(self.process.pid, signal.SIGTERM)
+            # # Kill the entire process group
+            os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
+            self.process.wait(timeout=5)
+            LOGGER.info("Terminated port forwarding for port %s", self.port)
+        except subprocess.TimeoutExpired:
+            LOGGER.warning(
+                "Port forwarding process for port %s did not terminate gracefully, forcing...",
+                self.port,
+            )
+            os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
+        except Exception as e:
+            LOGGER.error("Error terminating port forwarding for port %s: %s", self.port, e)
+        self.cleanup = True
+
+    def __del__(self):
+        """Clean up SSH process when object is destroyed."""
+        if not self.had_cleanup:
+            self.cleanup()
+
+
 class ProcessTree(Tree):
     """
     A tree of processes.
@@ -61,7 +104,7 @@ class ProcessTree(Tree):
         self.filter_text = ""
         self.update_interval = 1.0
         self.last_update = 0
-        self.forwarded_ports: Dict[int, subprocess.Popen] = {}
+        self.forwarded_ports: Dict[int, SSHForward] = {}
         self.regular_update_timer: Timer | None = None
         self.logger: Log = logger
 
@@ -176,39 +219,15 @@ class ProcessTree(Tree):
         # Remove old port forwards
         for existing in list(self.forwarded_ports.keys()):
             if existing not in ports_to_forward:
-                process = self.forwarded_ports.pop(existing)
-                try:
-                    process.terminate()
-                    # # Kill the entire process group
-                    # os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-                    process.wait(timeout=5)
-                    LOGGER.info("Terminated port forwarding for port %s", existing)
-                except subprocess.TimeoutExpired:
-                    LOGGER.warning(
-                        "Port forwarding process for port %s did not terminate gracefully, forcing...",
-                        existing,
-                    )
-                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-                except Exception as e:
-                    LOGGER.error("Error terminating port forwarding for port %s: %s", existing, e)
+                self.forwarded_ports[existing].cleanup()
+                self.forwarded_ports.pop(existing)
         # Start new port forwards
         for p in ports_to_forward:
             if p not in self.forwarded_ports:
-                # LOGGER.debug("Adding port to forward: %s", p)
+                self.forwarded_ports[p] = SSHForward(p)
                 try:
                     # Start the reverse_port subprocess with process group
-                    process = subprocess.Popen(
-                        ["reverse_port.sh", "fait", str(p)],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        preexec_fn=set_process_group,
-                    )
-                    self.forwarded_ports[p] = process
-                    LOGGER.info(
-                        "Started port forwarding for port %s with PID %s",
-                        p,
-                        process.pid,
-                    )
+                    self.forwarded_ports[p].start()
                 except Exception as e:
                     LOGGER.error("Failed to start port forwarding for port %s: %s", p, e)
 
@@ -218,20 +237,8 @@ class ProcessTree(Tree):
         if self.regular_update_timer:
             self.regular_update_timer.stop()
 
-        for port, process in self.forwarded_ports.items():
-            try:
-                # Kill the entire process group
-                os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-                process.wait(timeout=5)
-                LOGGER.debug("Terminated port forwarding for port %s during cleanup", port)
-            except subprocess.TimeoutExpired:
-                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-            except Exception as e:
-                LOGGER.error(
-                    "Error terminating port forwarding for port %s during cleanup: %s",
-                    port,
-                    e,
-                )
+        for process in self.forwarded_ports.values():
+            process.cleanup()
 
     async def change_group_by(self) -> None:
         options = ["cwd", "name", "pid"]
