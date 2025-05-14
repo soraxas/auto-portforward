@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import socket
 import subprocess
 import threading
@@ -40,6 +41,9 @@ class SharedMemory:
 
 
 def run_remote_script(ssh_host: str, shared_memory: SharedMemory, monitor_instance: "RemoteProcessMonitor"):
+    import time
+
+    # time.sleep(2)
     try:
         # Create a local socket for communication
         LOGGER.debug("Creating local socket")
@@ -55,10 +59,15 @@ def run_remote_script(ssh_host: str, shared_memory: SharedMemory, monitor_instan
         # Start the remote Python process that will connect back to us
         remote_cmd = f"python3 -c '{build_ssh_single_file_mode_script()}' {port}"
         LOGGER.debug("Starting SSH process with port forwarding")
-
         ssh_process = subprocess.Popen(
-            ["ssh", "-R", f"{port}:localhost:{port}", ssh_host, remote_cmd],
-            stdin=subprocess.DEVNULL,
+            [
+                "ssh",
+                "-R",
+                f"{port}:localhost:{port}",
+                ssh_host,
+                f"AP_SUDO_PASSWORD={os.getenv('AP_SUDO_PASSWORD', '')} {remote_cmd}",
+            ],
+            # stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             bufsize=1,
@@ -70,15 +79,35 @@ def run_remote_script(ssh_host: str, shared_memory: SharedMemory, monitor_instan
         # Start threads to monitor stdout/stderr
         def log_output(pipe, prefix):
             for line in pipe:
-                LOGGER.debug(f"SSH {prefix}: {line.strip()}")
+                if prefix == "stderr":
+                    LOGGER.error(f"SSH {prefix}: {line.strip()}")
+                else:
+                    LOGGER.info(f"SSH {prefix}: {line.strip()}")
 
         threading.Thread(target=log_output, args=(ssh_process.stdout, "stdout"), daemon=True).start()
         threading.Thread(target=log_output, args=(ssh_process.stderr, "stderr"), daemon=True).start()
 
-        # Accept the connection from the remote process
+        # Accept the connection from the remote process with timeout
         LOGGER.debug("Waiting for remote connection")
-        conn, _ = local_socket.accept()
-        LOGGER.debug("Remote connection established")
+
+        MAX_WAIT_TIME = 30
+        local_socket.settimeout(2)
+        start_time = time.time()
+        while True:
+            # Check if SSH process is still alive
+            if ssh_process.poll() is not None:
+                exit_code = ssh_process.poll()
+                raise RuntimeError(f"SSH process died with exit code {exit_code} while waiting for connection")
+
+            if time.time() - start_time > MAX_WAIT_TIME:
+                raise RuntimeError("Timeout while waiting for remote connection")
+            try:
+                conn, _ = local_socket.accept()
+                LOGGER.debug("Remote connection established")
+                break
+            except socket.timeout:
+                LOGGER.debug("Still waiting for remote connection...")
+                continue
 
         # Store the connection in the monitor instance, so that we can close it when cleanup is called
         monitor_instance.conn = conn
