@@ -102,13 +102,12 @@ def get_processes(connections: dict[int, list[int]]) -> dict[int, Process]:
     return processes
 
 
-def get_connections(needs_sudo: bool = True, password: str | None = None) -> dict[int, list[int]]:
+def get_connections(sudo_password: str | None = None) -> dict[int, list[int]]:
     """
     Get a mapping of process IDs to listening ports.
-    If needs_sudo is True and password is provided, use sudo -S and pass the password via stdin.
+    If needs_sudo is True and sudo_password is provided, use sudo -S and pass the password via stdin.
     """
-    if password is None:
-        password = os.getenv("AP_SUDO_PASSWORD")
+    sudo_password = sudo_password or os.getenv("AP_SUDO_PASSWORD")
 
     connections: dict[int, set[int]] = {}
     if HAS_PSUTIL:
@@ -121,15 +120,12 @@ def get_connections(needs_sudo: bool = True, password: str | None = None) -> dic
         # Fallback using 'lsof' (Unix only)
         try:
             args = []
-            if needs_sudo:
+            if sudo_password:
                 args = ["sudo", "-S"]
-                if password is None:
-                    raise ValueError(
-                        "password is required when needs_sudo is True. Either pass by --password or via $AP_SUDO_PASSWORD environment variable."
-                    )
+
             args += ["lsof", "-nP", "-iTCP", "-sTCP:LISTEN"]
-            if needs_sudo and password is not None:
-                output = subprocess.check_output(args, text=True, input=password + "\n")
+            if sudo_password is not None:
+                output = subprocess.check_output(args, text=True, input=sudo_password + "\n")
             else:
                 output = subprocess.check_output(args, text=True)
             for line in output.splitlines()[1:]:

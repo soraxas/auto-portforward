@@ -260,6 +260,9 @@ class ProcessMonitor(App):
     Tree > .selected-process {
         color: yellow;
     }
+    #log-widget {
+        height: 20%;
+    }
     """
 
     BINDINGS = [
@@ -273,7 +276,7 @@ class ProcessMonitor(App):
     def __init__(self, monitor: RemoteProcessMonitor):
         super().__init__()
         self.monitor = monitor
-        self.logger = Log(max_lines=50)
+        self.logger = Log(id="log-widget", max_lines=50)
         self.process_tree = ProcessTree(monitor, self.logger)
 
     @on(TuiLogHandler.NewLog)
@@ -292,6 +295,7 @@ class ProcessMonitor(App):
         # Add handler to root logger to capture all logs
         root_logger = logging.getLogger()
         root_logger.addHandler(tui_log_handler)
+        self.post_message(TuiLogHandler.NewLog("[Log Area]"))
 
     def compose(self) -> ComposeResult:
         yield Header()
