@@ -3,7 +3,6 @@ import logging
 import socket
 import subprocess
 import threading
-import os
 import signal
 
 from pathlib import Path
@@ -59,11 +58,13 @@ def run_remote_script(ssh_host: str, shared_memory: SharedMemory, monitor_instan
 
         ssh_process = subprocess.Popen(
             ["ssh", "-R", f"{port}:localhost:{port}", ssh_host, remote_cmd],
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             bufsize=1,
             universal_newlines=True,
             preexec_fn=preexec_set_pdeathsig,
+            start_new_session=True,
         )
 
         # Start threads to monitor stdout/stderr
@@ -81,23 +82,24 @@ def run_remote_script(ssh_host: str, shared_memory: SharedMemory, monitor_instan
 
         # Store the connection in the monitor instance, so that we can close it when cleanup is called
         monitor_instance.conn = conn
+        monitor_instance.ssh_process = ssh_process
     except Exception as e:
         LOGGER.error(f"Error in setup_connection: {e}", exc_info=True)
         raise
 
-    conn.settimeout(1)
+    conn.settimeout(3)
 
     try:
         last_data: dict[str, datatype.Process] = {}
         while not shared_memory.is_finished.is_set():
             # Read message length (4 bytes)
             try:
-                LOGGER.debug("Reading message length")
+                # LOGGER.debug("Reading message length")
                 length_bytes = conn.recv(4)
             except socket.timeout:
                 continue
 
-            LOGGER.debug("Received message length: %s", length_bytes)
+            # LOGGER.debug("Received message length: %s", length_bytes)
             if not length_bytes:
                 raise RuntimeError("Connection closed by remote")
 
@@ -145,7 +147,7 @@ def run_remote_script(ssh_host: str, shared_memory: SharedMemory, monitor_instan
         LOGGER.debug("Terminating SSH process")
         ssh_process.send_signal(signal.SIGINT)
         ssh_process.terminate()
-        os.killpg(os.getpgid(ssh_process.pid), signal.SIGTERM)
+        # os.killpg(os.getpgid(ssh_process.pid), signal.SIGTERM)
 
         try:
             ssh_process.wait(timeout=0.5)
@@ -171,7 +173,12 @@ class RemoteProcessMonitor(AbstractProvider):
         self.thread: threading.Thread | None = None
         self.cached_processes: dict[str, datatype.Process] = {}
         self.conn: socket.socket | None = None  # Store the socket connection
+        self.ssh_process: subprocess.Popen | None = None
         self.forwarded_ports: dict[int, SSHForward] = {}
+
+    @property
+    def name(self) -> str:
+        return f"{super().name}: {self.ssh_host}"
 
     def connect(self) -> bool:
         """Establish SSH connection and socket. Returns True if successful."""
@@ -194,10 +201,15 @@ class RemoteProcessMonitor(AbstractProvider):
         return self.cached_processes
 
     async def cleanup(self) -> None:
+        # try to kill the ssh process to speed up cleanup
+        if self.ssh_process:
+            self.ssh_process.kill()
+
         LOGGER.debug("Cleaning up RemoteProcessMonitor")
         for port in self.forwarded_ports:
             self.forwarded_ports[port].cleanup()
         self.forwarded_ports.clear()
+
         with self.shared_memory.lock:
             self.shared_memory.is_finished.set()
         if self.conn:

@@ -13,6 +13,10 @@ class AbstractProvider(ABC):
     def __init__(self):
         self.toggled_ports: Set[int] = set()
 
+    @property
+    def name(self) -> str:
+        return self.__class__.__name__
+
     @abstractmethod
     async def get_processes(self) -> dict[str, datatype.Process]:
         pass

@@ -47,7 +47,7 @@ class ProcessTree(Tree):
     """
 
     def __init__(self, monitor: AbstractProvider, logger: Log):
-        super().__init__("Processes")
+        super().__init__(monitor.name)
         self.monitor: AbstractProvider = monitor
         self.last_memory: Dict[str, Process] = {}
         self.selected_groups: Set[str] = set()

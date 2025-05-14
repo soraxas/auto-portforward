@@ -49,7 +49,7 @@ def send_via_socket():
             length_bytes = len(msg).to_bytes(4, "big")
             # print(f"Sending data message, length: {len(msg)}")
             s.sendall(length_bytes + msg)
-            time.sleep(1)  # Update every second
+            time.sleep(1.5)  # Update every second
         except Exception as e:
             import traceback
 
