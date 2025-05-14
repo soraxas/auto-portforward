@@ -14,7 +14,7 @@ except ImportError:
     import subprocess
 
     HAS_PSUTIL = False
-    LOGGER.warning("psutil not found, using fallback methods")
+    LOGGER.info("psutil not found, using fallback methods")
 
 # If we are in ssh_single_file_mode
 # we directly inject the Process class
@@ -125,11 +125,12 @@ def get_connections(sudo_password: str | None = None) -> tuple[dict[int, list[in
     if HAS_PSUTIL:
         for c in psutil.net_connections():
             if c.status == "LISTEN":
-                container = tcp_connections.setdefault(c.pid, set())
-                container.add(c.laddr[1])
-            elif c.type == socket.SOCK_DGRAM:
-                container = udp_connections.setdefault(c.pid, set())
-                container.add(c.laddr[1])
+                if c.type == socket.SOCK_STREAM:
+                    container = tcp_connections.setdefault(c.pid, set())
+                    container.add(c.laddr[1])
+                elif c.type == socket.SOCK_DGRAM:
+                    container = udp_connections.setdefault(c.pid, set())
+                    container.add(c.laddr[1])
         return mapper(tcp_connections), mapper(udp_connections)
     else:
         # Fallback using 'lsof' (Unix only)
@@ -141,13 +142,22 @@ def get_connections(sudo_password: str | None = None) -> tuple[dict[int, list[in
                 "lsof",
                 "-nP",
                 "-iTCP",
-                "-sTCP:LISTEN",
                 "-iUDP",
             ]
-            if sudo_password is not None:
-                output = subprocess.check_output(args, text=True, input=sudo_password + "\n")
-            else:
-                output = subprocess.check_output(args, text=True)
+            try:
+                if sudo_password is not None:
+                    LOGGER.debug("Running lsof with sudo")
+                    output = subprocess.check_output(
+                        args, text=True, input=sudo_password + "\n", stderr=subprocess.PIPE
+                    )
+                else:
+                    LOGGER.debug("Running lsof without sudo")
+                    output = subprocess.check_output(args, text=True, stderr=subprocess.PIPE)
+            except subprocess.CalledProcessError as e:
+                LOGGER.error("Failed to run lsof command: %s", e)
+                LOGGER.error("stdout: %s", e.output)
+                LOGGER.error("stderr: %s", e.stderr)
+                raise
             for line in output.splitlines()[1:]:
                 parts = line.split()
                 if len(parts) < 9:
