@@ -27,7 +27,7 @@ os.makedirs(log_dir, exist_ok=True)
 log_file = os.path.join(log_dir, "tui.log")
 
 # Create formatters
-formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+FORMATTER = logging.Formatter("[%(asctime)s %(levelname)-5s] %(message)s", datefmt="%H:%M:%S")
 
 # Configure root logger
 root_logger = logging.getLogger()
@@ -35,7 +35,7 @@ root_logger.setLevel(logging.DEBUG)
 
 # Add file handler for main log
 file_handler = logging.FileHandler(log_file)
-file_handler.setFormatter(formatter)
+file_handler.setFormatter(FORMATTER)
 root_logger.addHandler(file_handler)
 
 LOGGER = logging.getLogger(__file__)
@@ -275,8 +275,7 @@ class ProcessMonitor(App):
         # Attach TUI log handler
         tui_log_handler = TuiLogHandler(self.logger)
         tui_log_handler.setLevel(logging.DEBUG)
-        formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-        tui_log_handler.setFormatter(formatter)
+        tui_log_handler.setFormatter(FORMATTER)
 
         # Add handler to root logger to capture all logs
         root_logger = logging.getLogger()
