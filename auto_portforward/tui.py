@@ -40,6 +40,9 @@ root_logger.addHandler(file_handler)
 
 LOGGER = logging.getLogger(__file__)
 
+GROUP_SELECTED_STYLE = Style(color="green", italic=True)
+NODE_SELECTED_STYLE = Style(color="yellow", italic=True)
+
 
 class ProcessTree(Tree):
     """
@@ -141,15 +144,20 @@ class ProcessTree(Tree):
         # Create tree structure
         for group, processes in sorted_groups:
             group_key = str(group) if group is not None else "Unknown"
-            is_selected = group_key in self.selected_groups
+            selected_by_group = group_key in self.selected_groups
 
-            # Create group node
-            group_node = self.root.add(group_key, expand=True)
-            group_node.data = {"is_group": True}
+            if self.group_by != "pid":
+                # Create group node
+                group_node = self.root.add(group_key, expand=True)
+                group_node.data = {"is_group": True}
 
-            selected_style = Style(color="yellow", italic=True)
-            if is_selected:
-                group_node.label.style = selected_style
+                if selected_by_group:
+                    group_node.label.style = GROUP_SELECTED_STYLE
+
+                group_or_root_node = group_node
+            else:
+                # PID does not needs grouping.
+                group_or_root_node = self.root
 
             # Sort processes
             sorted_processes = sorted(
@@ -163,18 +171,21 @@ class ProcessTree(Tree):
                 ports_str = f" [Ports: {', '.join(map(str, ports))}]" if ports else ""
                 process_str = f"PID: {process.pid} - {process.name} - {process.status}{ports_str}"
 
-                # selected can also be done on a node-level
-                node_is_selected = is_selected or process.pid in self.selected_processes
-
+                process_node = group_or_root_node.add_leaf(process_str)
                 # Add process node
-                process_node = group_node.add_leaf(process_str)
                 process_node.data = {"is_group": False, "pid": process.pid}
-                if node_is_selected:
-                    process_node.label.style = selected_style
 
-                    # Add ports to forward
-                    for p in ports:
-                        ports_to_forward.add(p)
+                # selected can also be done on a node-level
+                if selected_by_group:
+                    process_node.label.style = GROUP_SELECTED_STYLE
+                elif process.pid in self.selected_processes:
+                    process_node.label.style = NODE_SELECTED_STYLE
+                else:
+                    continue
+
+                # Add ports to forward
+                for p in ports:
+                    ports_to_forward.add(p)
 
         self.call_later(self.update_toggled_ports, ports_to_forward)
 
