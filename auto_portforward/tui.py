@@ -99,6 +99,7 @@ class ProcessTree(Tree):
         self.monitor: AbstractProvider = monitor
         self.last_memory: Dict[str, Process] = {}
         self.selected_groups: Set[str] = set()
+        self.selected_processes: Set[int] = set()
         self.group_by = "cwd"
         self.sort_reverse = False
         self.filter_text = ""
@@ -156,6 +157,13 @@ class ProcessTree(Tree):
             self.selected_groups.add(group_key)
         await self.update_process_layout()
 
+    async def toggle_process(self, pid: int) -> None:
+        if pid in self.selected_processes:
+            self.selected_processes.remove(pid)
+        else:
+            self.selected_processes.add(pid)
+        await self.update_process_layout()
+
     async def update_process_layout(self) -> None:
         ports_to_forward = set()
 
@@ -204,10 +212,14 @@ class ProcessTree(Tree):
                 ports_str = f" [Ports: {', '.join(map(str, ports))}]" if ports else ""
                 process_str = f"PID: {process.pid} - {process.name} - {process.status}{ports_str}"
 
+                # selected can also be done on a node-level
+                node_is_selected = is_selected or process.pid in self.selected_processes
+                LOGGER.debug("is_selected: %s, process.pid: %s", node_is_selected, process.pid)
+
                 # Add process node
                 process_node = group_node.add_leaf(process_str)
-                process_node.data = {"is_group": False}
-                if is_selected:
+                process_node.data = {"is_group": False, "pid": process.pid}
+                if node_is_selected:
                     process_node.label.style = selected_style
 
                     # Add ports to forward
@@ -328,11 +340,14 @@ class ProcessMonitor(App):
             await self.process_tree.toggle_group(label)
         else:
             # If it's a process node, toggle its parent group
-            parent = node.parent
-            if parent:
-                # Convert Text object to string if needed
-                label = parent.label.plain if hasattr(parent.label, "plain") else str(parent.label)
-                await self.process_tree.toggle_group(label)
+            pid = node.data.get("pid", None)
+            if pid:
+                await self.process_tree.toggle_process(pid)
+            # parent = node.parent
+            # if parent:
+            #     # Convert Text object to string if needed
+            #     label = parent.label.plain if hasattr(parent.label, "plain") else str(parent.label)
+            #     await self.process_tree.toggle_group(label)
 
     async def on_unmount(self) -> None:
         """Clean up resources when the app is closed."""
