@@ -3,13 +3,11 @@ import logging
 
 import os
 import signal
+import atexit
+
+from auto_portforward.utils import preexec_set_pdeathsig
 
 LOGGER = logging.getLogger(__file__)
-
-
-def set_process_group():
-    """Set the process group ID to the current process ID."""
-    os.setpgrp()
 
 
 class SSHForward:
@@ -17,13 +15,15 @@ class SSHForward:
         self.port = port
         self.had_cleanup = False
         self.process: subprocess.Popen | None = None
+        # register cleanup to be called when the program exits
+        atexit.register(self.cleanup)
 
     def start(self):
         self.process = subprocess.Popen(
             ["ssh", "-N", "-L", f"{self.port}:localhost:{self.port}", "fait"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            preexec_fn=set_process_group,
+            preexec_fn=preexec_set_pdeathsig,
         )
         LOGGER.info(
             "Started port forwarding for port %s with PID %s",
@@ -32,6 +32,8 @@ class SSHForward:
         )
 
     def cleanup(self):
+        if self.had_cleanup:
+            return
         try:
             self.process.terminate()
             os.kill(self.process.pid, signal.SIGINT)
@@ -48,9 +50,4 @@ class SSHForward:
             os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
         except Exception as e:
             LOGGER.error("Error terminating port forwarding for port %s: %s", self.port, e)
-        self.cleanup = True
-
-    def __del__(self):
-        """Clean up SSH process when object is destroyed."""
-        if not self.had_cleanup:
-            self.cleanup()
+        self.had_cleanup = True

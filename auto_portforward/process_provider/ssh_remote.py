@@ -5,13 +5,12 @@ import subprocess
 import threading
 import os
 import signal
-import sys
-import ctypes
 
 from pathlib import Path
 from dataclasses import dataclass, field
 
 from auto_portforward.ssh_port_forward import SSHForward
+from auto_portforward.utils import preexec_set_pdeathsig
 from .abstract_provider import AbstractProvider
 from . import get_process_with_openports, script_on_remote_machine
 from .. import ROOT_DIR, datatype
@@ -41,14 +40,6 @@ class SharedMemory:
     is_finished: threading.Event = field(default_factory=threading.Event)
 
 
-def set_pdeathsig(sig=signal.SIGTERM):
-    """Set parent death signal on Linux so child dies if parent dies."""
-    if sys.platform.startswith("linux"):
-        libc = ctypes.CDLL("libc.so.6")
-        return libc.prctl(1, sig)
-    return 0
-
-
 def run_remote_script(ssh_host: str, shared_memory: SharedMemory, monitor_instance: "RemoteProcessMonitor"):
     try:
         # Create a local socket for communication
@@ -66,17 +57,13 @@ def run_remote_script(ssh_host: str, shared_memory: SharedMemory, monitor_instan
         remote_cmd = f"python3 -c '{build_ssh_single_file_mode_script()}' {port}"
         LOGGER.debug("Starting SSH process with port forwarding")
 
-        def preexec():
-            os.setsid()
-            set_pdeathsig(signal.SIGTERM)
-
         ssh_process = subprocess.Popen(
             ["ssh", "-R", f"{port}:localhost:{port}", ssh_host, remote_cmd],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             bufsize=1,
             universal_newlines=True,
-            preexec_fn=preexec,
+            preexec_fn=preexec_set_pdeathsig,
         )
 
         # Start threads to monitor stdout/stderr
@@ -156,16 +143,17 @@ def run_remote_script(ssh_host: str, shared_memory: SharedMemory, monitor_instan
         LOGGER.debug("Exception in run_remote_script: %s", e, exc_info=True)
     finally:
         LOGGER.debug("Terminating SSH process")
-        os.kill(ssh_process.pid, signal.SIGINT)
-        os.kill(ssh_process.pid, signal.SIGTERM)
+        ssh_process.send_signal(signal.SIGINT)
         ssh_process.terminate()
+        os.killpg(os.getpgid(ssh_process.pid), signal.SIGTERM)
+
         try:
-            ssh_process.wait(timeout=1)
+            ssh_process.wait(timeout=0.5)
         except subprocess.TimeoutExpired:
             LOGGER.warning("SSH process did not terminate gracefully, killing...")
             ssh_process.kill()
             ssh_process.wait()
-        LOGGER.debug("Closing local socket")
+        # LOGGER.debug("Closing local socket")
         # conn.close()
         # local_socket.close()
         # for thread in threads:
@@ -206,8 +194,10 @@ class RemoteProcessMonitor(AbstractProvider):
         return self.cached_processes
 
     async def cleanup(self) -> None:
-        # await super().cleanup()
         LOGGER.debug("Cleaning up RemoteProcessMonitor")
+        for port in self.forwarded_ports:
+            self.forwarded_ports[port].cleanup()
+        self.forwarded_ports.clear()
         with self.shared_memory.lock:
             self.shared_memory.is_finished.set()
         if self.conn:
