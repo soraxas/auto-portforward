@@ -67,7 +67,7 @@ def run_remote_script(ssh_host: str, shared_memory: SharedMemory, monitor_instan
                 ssh_host,
                 f"AP_SUDO_PASSWORD={os.getenv('AP_SUDO_PASSWORD', '')} {remote_cmd}",
             ],
-            # stdin=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             bufsize=1,
