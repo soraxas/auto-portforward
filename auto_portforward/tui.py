@@ -31,7 +31,7 @@ FORMATTER = logging.Formatter("[%(asctime)s %(levelname)-5s] %(message)s", datef
 
 # Configure root logger
 root_logger = logging.getLogger()
-root_logger.setLevel(logging.DEBUG)
+root_logger.setLevel(logging.INFO)
 
 # Add file handler for main log
 file_handler = logging.FileHandler(log_file)

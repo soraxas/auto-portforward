@@ -26,7 +26,17 @@ def main():
         nargs="?",
         help="SSH host to connect to (for remote process monitor and portforwarding)",
     )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Enable verbose logging",
+    )
     args = parser.parse_args()
+
+    if args.verbose:
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.DEBUG)
 
     if args.local:
         from auto_portforward.process_provider.local import LocalProcessMonitor
