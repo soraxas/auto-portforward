@@ -1,8 +1,12 @@
-# auto portfowrard
+# auto portforward
+
+<div align="center">
+  <img src="https://raw.githubusercontent.com/soraxas/auto-portforward/refs/heads/master/assets/screenshot.png" alt="auto-portforward">
+</div>
 
 ## Overview
 
-**auto-portfowrard** is a Python-based TUI application for monitoring processes and managing port forwarding on local or remote (SSH) machines. It provides a real-time, interactive process tree and can automatically set up SSH reverse port forwarding for processes listening on specific ports.
+**auto-portforward** is a Python-based TUI application for monitoring processes and managing port forwarding on local or remote (SSH) machines. It provides a real-time, interactive process tree and can automatically set up SSH reverse port forwarding for processes listening on specific ports.
 
 ## Features
 
