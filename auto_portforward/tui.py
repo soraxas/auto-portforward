@@ -54,7 +54,7 @@ class SSHForward:
 
     def start(self):
         self.process = subprocess.Popen(
-            ["reverse_port.sh", "fait", str(self.port)],
+            ["ssh", "-N", "-L", f"{self.port}:localhost:{self.port}", "fait"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             preexec_fn=set_process_group,
