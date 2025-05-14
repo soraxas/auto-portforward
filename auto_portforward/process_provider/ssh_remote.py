@@ -152,7 +152,8 @@ def run_remote_script(ssh_host: str, shared_memory: SharedMemory, monitor_instan
                             cwd=proc["cwd"],
                             status=proc["status"],
                             create_time=proc["create_time"],
-                            ports=sorted(proc["ports"]),
+                            tcp=sorted(proc["tcp"]),
+                            udp=sorted(proc["udp"]),
                         )
                         for pid, proc in info["processes"].items()
                     }

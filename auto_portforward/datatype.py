@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -8,4 +8,5 @@ class Process:
     cwd: str
     status: str
     create_time: str
-    ports: list[int]
+    tcp: list[int] = field(default_factory=list)
+    udp: list[int] = field(default_factory=list)

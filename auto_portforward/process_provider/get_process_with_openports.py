@@ -1,5 +1,9 @@
 import os
+import socket
 import sys
+import logging
+
+LOGGER = logging.getLogger(__name__)
 
 try:
     import psutil
@@ -10,7 +14,7 @@ except ImportError:
     import subprocess
 
     HAS_PSUTIL = False
-    print("psutil not found, using fallback methods")
+    LOGGER.warning("psutil not found, using fallback methods")
 
 # If we are in ssh_single_file_mode
 # we directly inject the Process class
@@ -55,10 +59,10 @@ def get_cwd_fallback(pid: int) -> str:
         return "?"
 
 
-def get_processes(connections: dict[int, list[int]]) -> dict[int, Process]:
+def get_processes(connections: dict[int, list[int]], udp_connections: dict[int, list[int]]) -> dict[int, Process]:
     processes = {}
 
-    for pid in connections.keys():
+    for pid in connections.keys() | udp_connections.keys():
         try:
             pid = int(pid)
         except (ValueError, TypeError):
@@ -72,7 +76,8 @@ def get_processes(connections: dict[int, list[int]]) -> dict[int, Process]:
                 cwd=proc.cwd(),
                 status=proc.status(),
                 create_time=str(proc.create_time()),
-                ports=sorted(connections[pid]),
+                tcp=sorted(connections.get(pid, [])),
+                udp=sorted(udp_connections.get(pid, [])),
             )
             processes[p.pid] = p
 
@@ -95,57 +100,82 @@ def get_processes(connections: dict[int, list[int]]) -> dict[int, Process]:
                 cwd=get_cwd_fallback(pid),
                 status=status,
                 create_time=create_time,
-                ports=sorted(connections.get(pid, [])),
+                tcp=sorted(connections.get(pid, [])),
+                udp=sorted(udp_connections.get(pid, [])),
             )
             processes[p.pid] = p
 
     return processes
 
 
-def get_connections(sudo_password: str | None = None) -> dict[int, list[int]]:
+def get_connections(sudo_password: str | None = None) -> tuple[dict[int, list[int]], dict[int, list[int]]]:
     """
-    Get a mapping of process IDs to listening ports.
+    Get a mapping of process IDs to listening ports for both TCP and UDP.
     If needs_sudo is True and sudo_password is provided, use sudo -S and pass the password via stdin.
+    Returns a tuple of (tcp_connections, udp_connections)
     """
     sudo_password = sudo_password or os.getenv("AP_SUDO_PASSWORD")
 
-    connections: dict[int, set[int]] = {}
+    tcp_connections: dict[int, set[int]] = {}
+    udp_connections: dict[int, set[int]] = {}
+
+    def mapper(connections: dict[int, set[int]]) -> dict[int, list[int]]:
+        return {k: list(v) for k, v in connections.items()}
+
     if HAS_PSUTIL:
         for c in psutil.net_connections():
             if c.status == "LISTEN":
-                container = connections.setdefault(c.pid, set())
+                container = tcp_connections.setdefault(c.pid, set())
                 container.add(c.laddr[1])
-        return {k: list(v) for k, v in connections.items()}
+            elif c.type == socket.SOCK_DGRAM:
+                container = udp_connections.setdefault(c.pid, set())
+                container.add(c.laddr[1])
+        return mapper(tcp_connections), mapper(udp_connections)
     else:
         # Fallback using 'lsof' (Unix only)
         try:
             args = []
             if sudo_password:
                 args = ["sudo", "-S"]
-
-            args += ["lsof", "-nP", "-iTCP", "-sTCP:LISTEN"]
+            args += [
+                "lsof",
+                "-nP",
+                "-iTCP",
+                "-sTCP:LISTEN",
+            ]
             if sudo_password is not None:
                 output = subprocess.check_output(args, text=True, input=sudo_password + "\n")
             else:
                 output = subprocess.check_output(args, text=True)
             for line in output.splitlines()[1:]:
                 parts = line.split()
-                if len(parts) >= 9:
-                    pid = int(parts[1])
-                    port_info = parts[8]
-                    if ":" in port_info:
-                        port = int(port_info.rsplit(":", 1)[-1])
-                        container = connections.setdefault(pid, set())
-                        container.add(port)
+                if len(parts) < 9:
+                    continue
+                pid = int(parts[1])
+                port_info = parts[8]
+                if ":" not in port_info:
+                    continue
+                port_str = port_info.rsplit(":", 1)[-1]
+                if not port_str.isdigit():
+                    continue
+                port = int(port_str)
+                proto = parts[7]
+                if proto.startswith("TCP") and "LISTEN" in line:
+                    container = tcp_connections.setdefault(pid, set())
+                    container.add(port)
+                elif proto.startswith("UDP"):
+                    container = udp_connections.setdefault(pid, set())
+                    container.add(port)
         except Exception as e:
-            print(f"exception: {e}")
+            LOGGER.error(f"exception: {e}")
             raise e
 
-        return {k: list(v) for k, v in connections.items()}
+    return mapper(tcp_connections), mapper(udp_connections)
 
 
 if __name__ == "__main__":
-    connections = get_connections()
-    print(connections)
-    processes = get_processes(connections)
-    print(processes)
+    connections, udp_connections = get_connections()
+    print("tcp connections", connections)
+    print("udp connections", udp_connections)
+    processes = get_processes(connections, udp_connections)
+    print("processes", processes)

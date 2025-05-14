@@ -40,10 +40,10 @@ def send_via_socket():
     while True:
         try:
             # Send process and connection information
-            connections = get_connections()
+            connections, udp_connections = get_connections()
             data = {
                 "type": "data",
-                "processes": {str(k): asdict(v) for k, v in get_processes(connections).items()},
+                "processes": {str(k): asdict(v) for k, v in get_processes(connections, udp_connections).items()},
             }
             msg = json.dumps(data).encode()
             length_bytes = len(msg).to_bytes(4, "big")

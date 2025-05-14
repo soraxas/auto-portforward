@@ -168,7 +168,19 @@ class ProcessTree(Tree):
             )
 
             for process in sorted_processes:
-                ports = process.ports
+                parts = []
+                if process.tcp:
+                    parts.extend(
+                        [
+                            (" 🌐", "bold cyan"),
+                            ("TCP", "bold cyan u"),
+                            (": ", "bold cyan"),
+                            f"{','.join(map(str, process.tcp))}",
+                        ]
+                    )
+                if process.udp:
+                    parts.append((" 📡UDP: ", "bold red"))
+                    parts.append(f"{','.join(map(str, process.udp))}")
 
                 process_node = group_or_root_node.add_leaf(
                     Text.assemble(
@@ -176,10 +188,8 @@ class ProcessTree(Tree):
                         (f"{process.pid}", "bold"),
                         (" 📦", ""),
                         (f"{process.name}", "blue"),
-                        (" ⚡", ""),
-                        (f"{process.status}", "magenta"),
-                        (" 🌐Ports: ", "bold cyan"),
-                        (f"{', '.join(map(str, ports))}" if ports else "", ""),
+                        *parts,
+                        (f" (⚡{process.status})", ""),
                         overflow="ellipsis",
                         justify="center",
                     )
@@ -196,7 +206,7 @@ class ProcessTree(Tree):
                     continue
 
                 # Add ports to forward
-                for p in ports:
+                for p in process.tcp:
                     ports_to_forward.add(p)
 
         self.call_later(self.update_toggled_ports, ports_to_forward)
