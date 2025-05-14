@@ -15,6 +15,7 @@ from textual.widgets import Log
 
 # from textual.style import Style
 from rich.style import Style
+from rich.text import Text
 
 from auto_portforward.process_provider.abstract_provider import AbstractProvider
 
@@ -168,10 +169,21 @@ class ProcessTree(Tree):
 
             for process in sorted_processes:
                 ports = process.ports
-                ports_str = f" [Ports: {', '.join(map(str, ports))}]" if ports else ""
-                process_str = f"PID: {process.pid} - {process.name} - {process.status}{ports_str}"
 
-                process_node = group_or_root_node.add_leaf(process_str)
+                process_node = group_or_root_node.add_leaf(
+                    Text.assemble(
+                        ("🆔", ""),
+                        (f"{process.pid}", "bold"),
+                        (" 📦", ""),
+                        (f"{process.name}", "blue"),
+                        (" ⚡", ""),
+                        (f"{process.status}", "magenta"),
+                        (" 🌐Ports: ", "bold cyan"),
+                        (f"{', '.join(map(str, ports))}" if ports else "", ""),
+                        overflow="ellipsis",
+                        justify="center",
+                    )
+                )
                 # Add process node
                 process_node.data = {"is_group": False, "pid": process.pid}
 
