@@ -34,10 +34,6 @@ FORMATTER = logging.Formatter("[%(asctime)s %(levelname)-5s] %(message)s", datef
 root_logger = logging.getLogger()
 root_logger.setLevel(logging.INFO)
 
-# Add file handler for main log
-file_handler = logging.FileHandler(log_file)
-file_handler.setFormatter(FORMATTER)
-root_logger.addHandler(file_handler)
 
 LOGGER = logging.getLogger(__file__)
 

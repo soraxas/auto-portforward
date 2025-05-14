@@ -32,11 +32,21 @@ def main():
         action="store_true",
         help="Enable verbose logging",
     )
+    parser.add_argument(
+        "--log-file",
+        help="Path to log file",
+    )
     args = parser.parse_args()
 
     if args.verbose:
         root_logger = logging.getLogger()
         root_logger.setLevel(logging.DEBUG)
+
+    if args.log_file:
+        file_handler = logging.FileHandler(args.log_file)
+        file_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+        root_logger = logging.getLogger()
+        root_logger.addHandler(file_handler)
 
     if args.local:
         from auto_portforward.process_provider.local import LocalProcessMonitor
