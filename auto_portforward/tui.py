@@ -2,12 +2,12 @@
 import asyncio
 import logging
 import os
-import subprocess
-import signal
+import threading
 from typing import Dict, Set
-from textual import work
+from textual import on, work
 from textual.app import App, ComposeResult
 from textual.message_pump import Timer
+from textual.message import Message
 from textual.widgets import Header, Footer, Static, Tree
 from textual.binding import Binding
 from textual.widgets import Log
@@ -38,55 +38,7 @@ file_handler = logging.FileHandler(log_file)
 file_handler.setFormatter(formatter)
 root_logger.addHandler(file_handler)
 
-LOGGER = logging.getLogger("tui")
-
-
-def set_process_group():
-    """Set the process group ID to the current process ID."""
-    os.setpgrp()
-
-
-class SSHForward:
-    def __init__(self, port: int):
-        self.port = port
-        self.had_cleanup = False
-        self.process: subprocess.Popen | None = None
-
-    def start(self):
-        self.process = subprocess.Popen(
-            ["ssh", "-N", "-L", f"{self.port}:localhost:{self.port}", "fait"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            preexec_fn=set_process_group,
-        )
-        LOGGER.info(
-            "Started port forwarding for port %s with PID %s",
-            self.port,
-            self.process.pid,
-        )
-
-    def cleanup(self):
-        try:
-            self.process.terminate()
-            os.kill(self.process.pid, signal.SIGTERM)
-            # # Kill the entire process group
-            os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
-            self.process.wait(timeout=5)
-            LOGGER.info("Terminated port forwarding for port %s", self.port)
-        except subprocess.TimeoutExpired:
-            LOGGER.warning(
-                "Port forwarding process for port %s did not terminate gracefully, forcing...",
-                self.port,
-            )
-            os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
-        except Exception as e:
-            LOGGER.error("Error terminating port forwarding for port %s: %s", self.port, e)
-        self.cleanup = True
-
-    def __del__(self):
-        """Clean up SSH process when object is destroyed."""
-        if not self.had_cleanup:
-            self.cleanup()
+LOGGER = logging.getLogger(__file__)
 
 
 class ProcessTree(Tree):
@@ -105,7 +57,6 @@ class ProcessTree(Tree):
         self.filter_text = ""
         self.update_interval = 1.0
         self.last_update = 0
-        self.forwarded_ports: Dict[int, SSHForward] = {}
         self.regular_update_timer: Timer | None = None
         self.logger: Log = logger
 
@@ -214,7 +165,6 @@ class ProcessTree(Tree):
 
                 # selected can also be done on a node-level
                 node_is_selected = is_selected or process.pid in self.selected_processes
-                LOGGER.debug("is_selected: %s, process.pid: %s", node_is_selected, process.pid)
 
                 # Add process node
                 process_node = group_node.add_leaf(process_str)
@@ -225,32 +175,20 @@ class ProcessTree(Tree):
                     # Add ports to forward
                     for p in ports:
                         ports_to_forward.add(p)
-        asyncio.create_task(self.manage_ports_forwarding(ports_to_forward))
 
-    async def manage_ports_forwarding(self, ports_to_forward: Set[int]) -> None:
-        # Remove old port forwards
-        for existing in list(self.forwarded_ports.keys()):
-            if existing not in ports_to_forward:
-                self.forwarded_ports[existing].cleanup()
-                self.forwarded_ports.pop(existing)
-        # Start new port forwards
-        for p in ports_to_forward:
-            if p not in self.forwarded_ports:
-                self.forwarded_ports[p] = SSHForward(p)
-                try:
-                    # Start the reverse_port subprocess with process group
-                    self.forwarded_ports[p].start()
-                except Exception as e:
-                    LOGGER.error("Failed to start port forwarding for port %s: %s", p, e)
+        self.call_later(self.update_toggled_ports, ports_to_forward)
 
-    def on_unmount(self) -> None:
+    @work(exclusive=True)
+    async def update_toggled_ports(self, ports_to_forward: Set[int]) -> None:
+        await self.monitor.set_toggled_ports(ports_to_forward)
+
+    async def on_unmount(self) -> None:
         """Clean up all port forwarding processes when the widget is removed."""
 
         if self.regular_update_timer:
             self.regular_update_timer.stop()
 
-        for process in self.forwarded_ports.values():
-            process.cleanup()
+        await self.monitor.cleanup()
 
     async def change_group_by(self) -> None:
         options = ["cwd", "name", "pid"]
@@ -267,14 +205,27 @@ class ProcessTree(Tree):
         await self.update_process_layout()
 
 
-class TUILogHandler(logging.Handler):
-    def __init__(self, tui_logger):
+class TuiLogHandler(logging.Handler):
+    class NewLog(Message):
+        """
+        This is a message that is sent to the TUI logger.
+        """
+
+        def __init__(self, msg: str):
+            super().__init__()
+            self.msg = msg
+
+    def __init__(self, tui_logger: Log):
         super().__init__()
         self.tui_logger = tui_logger
+        self._lock = threading.Lock()
 
     def emit(self, record):
         msg = self.format(record)
-        self.tui_logger.write_line(msg)
+        try:
+            self.tui_logger.post_message(self.NewLog(msg))
+        except Exception:
+            self.handleError(record)
 
 
 class ProcessMonitor(App):
@@ -299,15 +250,26 @@ class ProcessMonitor(App):
     def __init__(self, monitor: RemoteProcessMonitor):
         super().__init__()
         self.monitor = monitor
-        self.logger = Log()
+        self.logger = Log(max_lines=50)
         self.process_tree = ProcessTree(monitor, self.logger)
 
+    @on(TuiLogHandler.NewLog)
+    def handle_new_log(self, message: TuiLogHandler.NewLog) -> None:
+        """
+        These messages are bubbled up from the TUILogHandler.
+        """
+        self.logger.write_line(message.msg)
+
+    def on_mount(self) -> None:
         # Attach TUI log handler
-        tui_log_handler = TUILogHandler(self.logger)
+        tui_log_handler = TuiLogHandler(self.logger)
         tui_log_handler.setLevel(logging.DEBUG)
         formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
         tui_log_handler.setFormatter(formatter)
-        LOGGER.addHandler(tui_log_handler)
+
+        # Add handler to root logger to capture all logs
+        root_logger = logging.getLogger()
+        root_logger.addHandler(tui_log_handler)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -319,6 +281,7 @@ class ProcessMonitor(App):
         await self.process_tree.change_group_by()
 
     async def action_toggle_sort(self) -> None:
+        await self.monitor.cleanup()
         await self.process_tree.toggle_sort()
 
     def action_filter(self) -> None:
@@ -329,11 +292,9 @@ class ProcessMonitor(App):
         if node.is_root:
             return
         try:
-            LOGGER.debug("data: %s", node)
             is_group = node.data.get("is_group")
         except Exception:
             is_group = False
-        LOGGER.debug("is_group: %s", is_group)
         if is_group:
             # Convert Text object to string if needed
             label = node.label.plain if hasattr(node.label, "plain") else str(node.label)
