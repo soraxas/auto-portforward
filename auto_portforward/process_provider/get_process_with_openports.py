@@ -142,6 +142,7 @@ def get_connections(sudo_password: str | None = None) -> tuple[dict[int, list[in
                 "-nP",
                 "-iTCP",
                 "-sTCP:LISTEN",
+                "-iUDP",
             ]
             if sudo_password is not None:
                 output = subprocess.check_output(args, text=True, input=sudo_password + "\n")
