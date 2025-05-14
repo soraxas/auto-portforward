@@ -15,8 +15,7 @@ def main():
     parser.add_argument(
         "ssh_host",
         nargs="?",
-        default="soraxas@fait",
-        help="SSH host (default: soraxas@fait)",
+        help="SSH host to connect to (for remote process monitor and portforwarding)",
     )
     args = parser.parse_args()
 
@@ -29,6 +28,10 @@ def main():
 
         monitor = MockProcessMonitor()
     else:
+        if not args.ssh_host:
+            parser.error("SSH host is required when not using local or mock process monitor")
+            sys.exit(1)
+
         from auto_portforward.process_provider.ssh_remote import RemoteProcessMonitor
 
         monitor = RemoteProcessMonitor(args.ssh_host)

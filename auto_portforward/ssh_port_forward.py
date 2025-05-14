@@ -11,16 +11,21 @@ LOGGER = logging.getLogger(__file__)
 
 
 class SSHForward:
-    def __init__(self, port: int):
+    def __init__(self, port: int, ssh_host: str):
+        # port to forward
         self.port = port
+        # ssh host to connect to
+        self.ssh_host = ssh_host
+        # whether the cleanup has been called
         self.had_cleanup = False
+        # the process that is running the port forwarding
         self.process: subprocess.Popen | None = None
         # register cleanup to be called when the program exits
         atexit.register(self.cleanup)
 
     def start(self):
         self.process = subprocess.Popen(
-            ["ssh", "-N", "-L", f"{self.port}:localhost:{self.port}", "fait"],
+            ["ssh", "-N", "-L", f"{self.port}:localhost:{self.port}", self.ssh_host],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             preexec_fn=preexec_set_pdeathsig,

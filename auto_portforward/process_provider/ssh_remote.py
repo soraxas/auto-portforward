@@ -227,7 +227,7 @@ class RemoteProcessMonitor(AbstractProvider):
             self.thread = None
 
     async def on_ports_turned_on(self, port: int):
-        self.forwarded_ports[port] = SSHForward(port)
+        self.forwarded_ports[port] = SSHForward(port, ssh_host=self.ssh_host)
         try:
             # Start the reverse_port subprocess with process group
             self.forwarded_ports[port].start()
