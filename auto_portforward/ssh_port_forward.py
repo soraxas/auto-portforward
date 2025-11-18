@@ -54,5 +54,7 @@ class SSHForward:
             os.kill(self.process.pid, signal.SIGKILL)
             os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
         except Exception as e:
-            LOGGER.error("Error terminating port forwarding for port %s: %s", self.port, e)
+            LOGGER.error(
+                "Error terminating port forwarding for port %s: %s", self.port, e
+            )
         self.had_cleanup = True

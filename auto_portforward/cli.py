@@ -19,7 +19,9 @@ def main():
         )
     )
     group = parser.add_mutually_exclusive_group()
-    group.add_argument("-l", "--local", action="store_true", help="Use local process monitor")
+    group.add_argument(
+        "-l", "--local", action="store_true", help="Use local process monitor"
+    )
     group.add_argument("--mock", action="store_true", help="Use mock process monitor")
     parser.add_argument(
         "ssh_host",
@@ -44,7 +46,9 @@ def main():
 
     if args.log_file:
         file_handler = logging.FileHandler(args.log_file)
-        file_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+        file_handler.setFormatter(
+            logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+        )
         root_logger = logging.getLogger()
         root_logger.addHandler(file_handler)
 
@@ -58,7 +62,9 @@ def main():
         monitor = MockProcessMonitor()
     else:
         if not args.ssh_host:
-            parser.error("SSH host is required when not using local or mock process monitor")
+            parser.error(
+                "SSH host is required when not using local or mock process monitor"
+            )
             sys.exit(1)
 
         from auto_portforward.process_provider.ssh_remote import RemoteProcessMonitor

@@ -63,6 +63,8 @@ class LocalProcessMonitor(abstract_provider.AbstractProvider):
 
     async def get_processes(self) -> dict[str, datatype.Process]:
         connections, udp_connections = get_process_with_openports.get_connections()
-        processes = get_process_with_openports.get_processes(connections, udp_connections)
+        processes = get_process_with_openports.get_processes(
+            connections, udp_connections
+        )
         self.processes = processes
         return {str(k): v for k, v in self.processes.items()}

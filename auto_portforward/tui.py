@@ -28,7 +28,9 @@ os.makedirs(log_dir, exist_ok=True)
 log_file = os.path.join(log_dir, "tui.log")
 
 # Create formatters
-FORMATTER = logging.Formatter("[%(asctime)s %(levelname)-5s] %(message)s", datefmt="%H:%M:%S")
+FORMATTER = logging.Formatter(
+    "[%(asctime)s %(levelname)-5s] %(message)s", datefmt="%H:%M:%S"
+)
 
 # Configure root logger
 root_logger = logging.getLogger()
@@ -121,7 +123,10 @@ class ProcessTree(Tree):
         # Group processes
         grouped: Dict[str, list[Process]] = {}
         for pid, process in self.last_memory.items():
-            if self.filter_text and self.filter_text.lower() not in process.name.lower():
+            if (
+                self.filter_text
+                and self.filter_text.lower() not in process.name.lower()
+            ):
                 continue
             key = getattr(process, self.group_by)
             if key not in grouped:
@@ -329,7 +334,9 @@ class ProcessMonitor(App):
             is_group = False
         if is_group:
             # Convert Text object to string if needed
-            label = node.label.plain if hasattr(node.label, "plain") else str(node.label)
+            label = (
+                node.label.plain if hasattr(node.label, "plain") else str(node.label)
+            )
             await self.process_tree.toggle_group(label)
         else:
             # If it's a process node, toggle its parent group

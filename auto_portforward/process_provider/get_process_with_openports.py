@@ -28,7 +28,9 @@ def get_cwd_linux(pid: int) -> str:
         password = os.getenv("AP_SUDO_PASSWORD")
         if password:
             cmd = ["sudo", "-S", "readlink", f"/proc/{pid}/cwd"]
-            result = subprocess.run(cmd, input=password + "\n", capture_output=True, text=True)
+            result = subprocess.run(
+                cmd, input=password + "\n", capture_output=True, text=True
+            )
             if result.returncode == 0:
                 return result.stdout.strip()
         else:
@@ -40,7 +42,9 @@ def get_cwd_linux(pid: int) -> str:
 
 def get_cwd_macos(pid: int) -> str:
     try:
-        result = subprocess.check_output(["lsof", "-a", "-p", str(pid), "-d", "cwd"], text=True)
+        result = subprocess.check_output(
+            ["lsof", "-a", "-p", str(pid), "-d", "cwd"], text=True
+        )
         lines = result.strip().split("\n")
         if len(lines) >= 2:
             # Last column of the second line is the cwd
@@ -59,7 +63,9 @@ def get_cwd_fallback(pid: int) -> str:
         return "?"
 
 
-def get_processes(connections: dict[int, list[int]], udp_connections: dict[int, list[int]]) -> dict[int, Process]:
+def get_processes(
+    connections: dict[int, list[int]], udp_connections: dict[int, list[int]]
+) -> dict[int, Process]:
     processes = {}
 
     for pid in connections.keys() | udp_connections.keys():
@@ -108,7 +114,9 @@ def get_processes(connections: dict[int, list[int]], udp_connections: dict[int, 
     return processes
 
 
-def get_connections(sudo_password: str | None = None) -> tuple[dict[int, list[int]], dict[int, list[int]]]:
+def get_connections(
+    sudo_password: str | None = None,
+) -> tuple[dict[int, list[int]], dict[int, list[int]]]:
     """
     Get a mapping of process IDs to listening ports for both TCP and UDP.
     If needs_sudo is True and sudo_password is provided, use sudo -S and pass the password via stdin.
@@ -148,11 +156,16 @@ def get_connections(sudo_password: str | None = None) -> tuple[dict[int, list[in
                 if sudo_password is not None:
                     LOGGER.debug("Running lsof with sudo")
                     output = subprocess.check_output(
-                        args, text=True, input=sudo_password + "\n", stderr=subprocess.PIPE
+                        args,
+                        text=True,
+                        input=sudo_password + "\n",
+                        stderr=subprocess.PIPE,
                     )
                 else:
                     LOGGER.debug("Running lsof without sudo")
-                    output = subprocess.check_output(args, text=True, stderr=subprocess.PIPE)
+                    output = subprocess.check_output(
+                        args, text=True, stderr=subprocess.PIPE
+                    )
             except subprocess.CalledProcessError as e:
                 LOGGER.error("Failed to run lsof command: %s", e)
                 LOGGER.error("stdout: %s", e.output)

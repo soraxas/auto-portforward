@@ -40,7 +40,9 @@ class SharedMemory:
     is_finished: threading.Event = field(default_factory=threading.Event)
 
 
-def run_remote_script(ssh_host: str, shared_memory: SharedMemory, monitor_instance: "RemoteProcessMonitor"):
+def run_remote_script(
+    ssh_host: str, shared_memory: SharedMemory, monitor_instance: "RemoteProcessMonitor"
+):
     import time
 
     # time.sleep(2)
@@ -84,8 +86,12 @@ def run_remote_script(ssh_host: str, shared_memory: SharedMemory, monitor_instan
                 else:
                     LOGGER.info(f"SSH {prefix}: {line.strip()}")
 
-        threading.Thread(target=log_output, args=(ssh_process.stdout, "stdout"), daemon=True).start()
-        threading.Thread(target=log_output, args=(ssh_process.stderr, "stderr"), daemon=True).start()
+        threading.Thread(
+            target=log_output, args=(ssh_process.stdout, "stdout"), daemon=True
+        ).start()
+        threading.Thread(
+            target=log_output, args=(ssh_process.stderr, "stderr"), daemon=True
+        ).start()
 
         # Accept the connection from the remote process with timeout
         LOGGER.debug("Waiting for remote connection")
@@ -97,7 +103,9 @@ def run_remote_script(ssh_host: str, shared_memory: SharedMemory, monitor_instan
             # Check if SSH process is still alive
             if ssh_process.poll() is not None:
                 exit_code = ssh_process.poll()
-                raise RuntimeError(f"SSH process died with exit code {exit_code} while waiting for connection")
+                raise RuntimeError(
+                    f"SSH process died with exit code {exit_code} while waiting for connection"
+                )
 
             if time.time() - start_time > MAX_WAIT_TIME:
                 raise RuntimeError("Timeout while waiting for remote connection")
@@ -220,7 +228,9 @@ class RemoteProcessMonitor(AbstractProvider):
             return False
 
     def setup_connection(self):
-        self.thread = threading.Thread(target=run_remote_script, args=(self.ssh_host, self.shared_memory, self))
+        self.thread = threading.Thread(
+            target=run_remote_script, args=(self.ssh_host, self.shared_memory, self)
+        )
         self.thread.start()
 
     async def get_processes(self) -> dict[str, datatype.Process]:
